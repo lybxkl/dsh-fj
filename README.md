@@ -59,10 +59,10 @@ New-Item -ItemType Junction -Path $target -Target 'D:\GoRoom\docx-cli\dsh-plugin
 
 1. 新稿从对话走到成品：`formatjiang_stage_attachment` 把文件复制进收件区 → `receive_file` 登记 → `import_document` 建论文或追加版本 → `bind_session` 绑定会话 → `read_document_outline` / `read_document_chunk` / `search_document` 读稿 → `create_structure_plan` / `confirm_structure_plan` 确认结构 → `preview_layout_plan` → `apply_layout_as_branch` → `start_diagnostic_run` / `get_diagnostic_status` / `list_findings` 检查 → `generate_commented_docx` / `generate_revision_draft` / `export_diagnostic_report` 导出 → `fetch_file` 取回成品。
 2. 套版：`list_papers` → `list_versions` → `list_layout_configs` → `preview_layout_plan`（可带套用范围）→ 把冲突与影响讲清楚 → 用户明确同意后 `apply_layout_as_branch`。
-3. 提交检查：`list_diagnostic_profiles` → `start_diagnostic_run`（或同步 `run_paper_diagnostic`）→ `get_diagnostic_status` → `list_findings` 分页读问题，数字必须有工具结果出处。
+3. 提交检查：`list_diagnostic_profiles` → `start_diagnostic_run`（或同步 `run_paper_diagnostic`）→ `get_diagnostic_status({ run_id, wait_seconds: 120 })` 一直等到 status 不是 running（还在跑就再调一次，最多 180 秒一次）→ `list_findings` 分页读问题，数字必须有工具结果出处。结果在对话里给出来，不要让用户切到应用里自己看。
 4. 引文页码核对：`preview_citation_check` → `start_citation_check` → `list_citation_check_items` → `get_citation_check_item`；缺来源时 `list_citation_source_candidates` 与 `preflight_citation_source`。
 5. 找格式与共坊：`search_forge_templates` → `get_forge_template` → `check_forge_import` → 用户确认后 `import_forge_template`；版式生成任务用 `list_layout_generations` 与 `list_layout_generation_events` 续读。
-6. 资料与投稿：`create_knowledge_base` / `import_knowledge_base_files` → `get_rag_run`；`search_knowledge_base` 与跨库 `search_knowledge_bases`；投稿前 `inspect_blind_review`，交付 `build_submission_package`。
+6. 资料与投稿：`create_knowledge_base` / `import_knowledge_base_files` → `get_rag_run({ run_id, wait_seconds: 120 })` 守到解析结束；`search_knowledge_base` 与跨库 `search_knowledge_bases`；投稿前 `inspect_blind_review`，交付 `build_submission_package`。
 7. 断线恢复：`list_interrupted_tasks` 盘点，`resume_import_recovery` 决定资料导入续跑或取消。
 8. 审稿意见与回复信：`get_research_context` / `list_submission_requirements` 读口径，`list_review_items` 逐条读意见，`summarize_review_items` 给进度，`export_response_letter` 出回复信并用 `fetch_file` 取回。
 9. 星轨：`get_symphony_state` 读状态与运行索引，`get_symphony_report` 读论证审查覆盖（`determined` 与 `insufficient` / `blocked` 分开说），`get_symphony_source_evidence` 读已登记来源证据。
