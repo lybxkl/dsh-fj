@@ -6,6 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,7 +15,13 @@ import * as plugin from '../index.js';
 
 const EXE = 'D:\\GoRoom\\docx-cli\\bin\\格式匠.exe';
 
-function makeCtx() {
+/**
+ * 造一个宿主替身。
+ *
+ * @param {{missing?: string[]}} options - 模拟「服务还没起来」：列在这里的服务
+ *   既不在 ctx 上，get() 也拿不到，用来验证插件不会因此停止装配。
+ */
+function makeCtx({ missing = [], loader = null, baseUrl = '', pluginStatus = null } = {}) {
   const record = {
     tools: [],
     mounts: [],
@@ -59,6 +66,7 @@ function makeCtx() {
       watch() { return () => {}; },
     },
     get(service) {
+      if (missing.includes(service)) return undefined;
       if (service === 'systemPrompt') {
         return {
           section(section) {
@@ -92,6 +100,9 @@ function makeCtx() {
           },
         };
       }
+      // 插件可能走 ctx.get 读服务（不 inject 时唯一不抛错的路），与属性同源。
+      if (service === 'mcpManager') return ctx.mcpManager;
+      if (service === 'loader') return loader === null ? undefined : loader;
       return undefined;
     },
     effect(fn, label) {
@@ -101,7 +112,66 @@ function makeCtx() {
       if (typeof dispose === 'function') record.disposers.push(dispose);
       return typeof dispose === 'function' ? dispose : () => {};
     },
+    /**
+     * 预设作用域那一份会用 ctx.plugin 自己挂 mcp 客户端。
+     * 句柄给 await()/dispose()/statusCell，够插件把状态与卸载走完。
+     */
+    plugin(pluginObject, config) {
+      record.plugins = record.plugins || [];
+      record.plugins.push({ pluginObject, config });
+      let current = pluginStatus
+        ? { ...pluginStatus }
+        : { state: 'connected', toolCount: 3, connectedAt: Date.now() };
+      const listeners = [];
+      const handle = {
+        statusCell: {
+          current: () => current,
+          closure: () => ({ closeConfirmed: true }),
+          onChange: (fn) => {
+            listeners.push(fn);
+            return () => {
+              const index = listeners.indexOf(fn);
+              if (index >= 0) listeners.splice(index, 1);
+            };
+          },
+        },
+        disposed: 0,
+        /** 用例里把状态改成 failed 等，模拟桥接中途断掉。 */
+        fire(status) {
+          current = status;
+          for (const fn of [...listeners]) fn(status);
+        },
+        listenerCount: () => listeners.length,
+        async await() {},
+        async dispose() { handle.disposed += 1; },
+      };
+      record.lastPluginHandle = handle;
+      return handle;
+    },
+    /**
+     * 宿主 cordis 的 ctx.inject：依赖齐了才执行回调，服务变化会重跑。
+     * 测试里服务都是现成的，所以同步执行；缺服务时不执行（与真实行为一致）。
+     */
+    inject(deps, callback) {
+      const names = Array.isArray(deps) ? deps : Object.keys(deps || {});
+      const missing = names.filter((name) => ctx[name] === undefined && ctx.get(name) === undefined);
+      if (missing.length) {
+        record.skippedInjects = (record.skippedInjects || []).concat([{ names, missing }]);
+        return () => {};
+      }
+      const label = `inject:${names.join(',')}`;
+      record.effects.push(label);
+      const dispose = callback(ctx);
+      const handle = typeof dispose === 'function' ? dispose : () => {};
+      record.effectHandles.push({ label, dispose: handle });
+      record.disposers.push(handle);
+      return handle;
+    },
   };
+  // mcpManager 用属性挂在 ctx 上，缺服务时把它摘掉，模拟宿主还没提供。
+  if (missing.includes('mcpManager')) ctx.mcpManager = undefined;
+  // 插件加载器的 baseUrl 一般由宿主继承下来；用例里显式给才知道拼出来的 parent 是什么。
+  if (baseUrl !== '') ctx.baseUrl = baseUrl;
   return { ctx, record, serverView };
 }
 
@@ -148,7 +218,9 @@ async function call(route, options) {
 
 test('挂载参数与工具面符合桥接契约', () => {
   assert.equal(plugin.name, 'formatjiang-assistant');
-  assert.deepEqual(plugin.inject, ['tools', 'mcpManager']);
+  // 只有 tools 是硬依赖：mcpManager/webServer 改成「等到了再装配」，
+  // 否则服务晚启动时整个插件会停在 pending，工具与面板一起消失。
+  assert.deepEqual(plugin.inject, ['tools']);
   assert.ok(fs.existsSync(EXE), `测试用的格式匠程序不存在：${EXE}`);
 
   const { ctx, record } = makeCtx();
@@ -358,8 +430,78 @@ test('打开失败不抛未捕获异常，而是变成可读的错误', async ()
   }
 });
 
-test('面板请求体超限返回 413，且不触发重连', async () => {
-  const { ctx, record } = makeCtx();
+test('打开格式匠会等到端口就绪，并在状态里立刻体现', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-open-ready-'));
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  fs.writeFileSync(path.join(dir, 'mcp_settings.json'), JSON.stringify({ enabled: true, port }), 'utf8');
+  try {
+    const { ctx, record } = makeCtx();
+    // 用 node 自己当「桌面程序」：stdio 被忽略，进程起来就退，不会真的打开窗口。
+    plugin.apply(ctx, { executablePath: process.execPath, installationId: 'ins_open_ready', dataDir: dir, autoReconnect: false });
+    const open = record.tools.find((item) => item.name === 'formatjiang_open');
+    // spawn 的调用被替身记了下来：拉起桌面时必须带「后台」环境变量，
+    // 否则模型一调工具就把窗口弹到最前面挡住用户。
+    globalThis.__fjSpawnCalls = [];
+    const value = await open.execute({});
+    assert.equal(value.ok, true, value.text);
+    assert.match(value.text, new RegExp(`端口 ${port} 已经在听`));
+    const launched = (globalThis.__fjSpawnCalls || []).find((item) => item.file === process.execPath);
+    assert.ok(launched, `没有拉起桌面程序：${JSON.stringify(globalThis.__fjSpawnCalls)}`);
+    assert.equal(launched.options?.env?.FORMATJIANG_LAUNCH_BACKGROUND, '1', '拉起桌面时必须声明后台启动');
+
+    // 刚测到的事实要写进状态，紧接着的状态查询不能再报旧值。
+    const status = record.tools.find((item) => item.name === 'formatjiang_status');
+    const snap = await status.execute({});
+    assert.equal(snap.formatjiang.listening, true);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('两个会话同时打开时只启动一次，后到的复用同一次结果', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-open-once-'));
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  fs.writeFileSync(path.join(dir, 'mcp_settings.json'), JSON.stringify({ enabled: true, port }), 'utf8');
+  try {
+    const { ctx, record } = makeCtx();
+    plugin.apply(ctx, { executablePath: process.execPath, installationId: 'ins_open_once', dataDir: dir, autoReconnect: false });
+    const open = record.tools.find((item) => item.name === 'formatjiang_open');
+    const [first, second] = await Promise.all([open.execute({}), open.execute({})]);
+    assert.equal(first, second, '两次调用应当复用同一个结果对象');
+    assert.equal(first.ok, true, first.text);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('打开后端口等不到就绪时照实说，不把「已请求」讲成「已就绪」', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-open-slow-'));
+  // 先占一个端口再关掉：配置里写的是「没人听」的端口。
+  const probe = net.createServer();
+  await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  const port = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+  fs.writeFileSync(path.join(dir, 'mcp_settings.json'), JSON.stringify({ enabled: true, port }), 'utf8');
+  try {
+    const { ctx, record } = makeCtx();
+    plugin.apply(ctx, { executablePath: process.execPath, installationId: 'ins_open_slow', dataDir: dir, autoReconnect: false });
+    const open = record.tools.find((item) => item.name === 'formatjiang_open');
+    const value = await open.execute({});
+    assert.equal(value.ok, false, value.text);
+    assert.match(value.text, /没有就绪/);
+    assert.match(value.text, /formatjiang_status/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('面板请求体超限返回 413，且不触发重连', async () => {  const { ctx, record } = makeCtx();
   plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_test0009' });
   const route = record.routes[0];
   const oversized = JSON.stringify({ pad: 'x'.repeat(70 * 1024) });
@@ -515,7 +657,7 @@ test('插件卸载时停掉守护定时器并卸掉桥接', () => {
     const { ctx, record } = makeCtx();
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_auto005' });
     assert.equal(timers.length, 1);
-    const bridge = record.effectHandles.find((item) => item.label === 'formatjiang: bridge');
+    const bridge = record.effectHandles.find((item) => item.label === 'inject:mcpManager');
     assert.ok(bridge, '应当注册桥接生命周期');
     bridge.dispose();
     assert.equal(timers[0].cleared, true, '卸载后不应继续轮询');
@@ -858,5 +1000,516 @@ test('附件复制失败时清理本次半成品且保留原件', async () => {
     fs.promises.copyFile = originalCopy;
     record.disposers.forEach(dispose => dispose());
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/*
+ * 装配期失败的隔离与降级。
+ *
+ * 这一组用例守的是同一条底线：服务没就绪、或某条工具写错，只影响它自己，
+ * 不能让工具面、系统提示、技能与面板路由一起消失——那在界面上只会表现成
+ * 「设置页一直在读状态」。
+ */
+
+test('webServer 没就绪时其余装配照常，只是面板接口没挂上', () => {
+  const { ctx, record } = makeCtx({ missing: ['webServer'] });
+  plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_noweb' });
+
+  assert.equal(record.tools.length, 11, '工具不应因为面板服务缺席而消失');
+  assert.equal(record.prompts.length, 1, '系统提示应当照常注册');
+  assert.equal(record.skills.length, 1, '工作流技能应当照常注册');
+  assert.equal(record.routes.length, 0, 'webServer 缺席时不应当有面板路由');
+  assert.deepEqual(record.skippedInjects?.[0]?.missing, ['webServer']);
+});
+
+test('mcpManager 没就绪时工具照常装配，状态说明在等服务', async () => {
+  const { ctx, record } = makeCtx({ missing: ['mcpManager'] });
+  plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_nomcp' });
+
+  assert.equal(record.tools.length, 11);
+  assert.equal(record.mounts.length, 0, '服务没起来时不应当假装挂过桥接');
+  assert.equal(record.routes.length, 1, '面板路由与 mcpManager 无关，仍应挂上');
+
+  const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+  const result = await status.execute({});
+  assert.match(result.text, /等待 MCP 客户端服务就绪/);
+});
+
+test('单条工具注册失败只记一笔，其余工具与面板照常', () => {
+  const { ctx, record } = makeCtx();
+  const realRegister = ctx.tools.register;
+  ctx.tools.register = (definition) => {
+    if (definition.name === 'formatjiang_catalog') throw new Error('宿主拒绝了这条工具');
+    return realRegister(definition);
+  };
+  plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_onetool' });
+
+  assert.equal(record.tools.length, 10, '坏掉的那条不注册，其余照常');
+  assert.equal(record.routes.length, 1, '面板路由不应当被一条工具连累');
+  const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+  assert.ok(status, '状态工具本身不应当被连累');
+});
+
+/*
+ * 「配置说已开启」和「现在有人在听」是两件事。
+ *
+ * 这两种事实混成一句打勾，用户就会在格式匠根本没运行时看到「已经就绪」，
+ * 然后把「一直连不上」当成插件坏了。这一组用例守的是：状态里必须分开说。
+ */
+
+test('端口没在听时状态写「没有监听」，而不是把配置当就绪', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-listen-off-'));
+  // 1 号端口不会有服务在听，探测会立刻失败。
+  fs.writeFileSync(path.join(dir, 'mcp_settings.json'), JSON.stringify({ enabled: true, port: 1 }), 'utf8');
+  try {
+    const { ctx, record } = makeCtx();
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_listen_off', dataDir: dir, autoReconnect: false });
+    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    // 第一次快照触发端口探测（异步），等结果落地后再取一次同样的状态。
+    await status.execute({});
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const snap = await status.execute({});
+
+    assert.equal(snap.formatjiang.listening, false, '探测不到监听时必须写 false');
+    assert.equal(snap.formatjiang.mcpEnabled, true, '配置事实仍然照实报');
+    assert.ok(snap.hints.some((hint) => hint.includes('没有监听')), `缺少「没有监听」提示：${JSON.stringify(snap.hints)}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('端口真的在听时状态写「正在监听」，诊断信息也照实说', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-listen-on-'));
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  fs.writeFileSync(path.join(dir, 'mcp_settings.json'), JSON.stringify({ enabled: true, port }), 'utf8');
+  try {
+    const { ctx, record } = makeCtx();
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_listen_on', dataDir: dir, autoReconnect: false });
+    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const diagnostics = record.tools.find((tool) => tool.name === 'formatjiang_diagnostics');
+    // 第一次快照触发端口探测（异步），等结果落地后再取一次同样的状态。
+    await status.execute({});
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const snap = await status.execute({});
+
+    assert.equal(snap.formatjiang.listening, true);
+    assert.ok(!snap.hints.some((hint) => hint.includes('没有监听')), '端口在听时不该提示未监听');
+    const report = await diagnostics.execute({});
+    assert.match(report.text, /端口 \d+（正在监听）/);
+  } finally {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('宿主只说 Connection closed 时，插件自己把桥接 stderr 捞回来', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-probe-'));
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  fs.writeFileSync(path.join(dir, 'mcp_settings.json'), JSON.stringify({ enabled: true, port }), 'utf8');
+  const { ctx, record, serverView } = makeCtx();
+  serverView.status.state = 'failed';
+  serverView.status.lastError = 'mcp-client(formatjiang): startup: SdkError: Connection closed';
+  try {
+    // 用 node 当「桥接程序」：它必然会因为这个参数组合失败并往 stderr 写东西，
+    // 正好用来验证「探测能不能把子进程那句话取回来」，不依赖真的格式匠。
+    plugin.apply(ctx, { executablePath: process.execPath, installationId: 'ins_probe', dataDir: dir, autoReconnect: false });
+    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    // 第一步触发端口探测，等它落地；第二步才会轮到桥接探测，再等子进程退出。
+    await status.execute({});
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await status.execute({});
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    const snap = await status.execute({});
+
+    assert.ok(snap.probe && snap.probe.at > 0, '没有发起桥接探测');
+    assert.ok(snap.probe.reason.length > 0, `没有取回 stderr 原文：${JSON.stringify(snap.probe)}`);
+    assert.ok(snap.hints.some((hint) => hint.includes('桥接启动失败的原因')), `缺少旁证提示：${JSON.stringify(snap.hints)}`);
+  } finally {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+
+
+test('宿主那一份选了 mountScope: preset 就不再挂桥接，状态里说清去哪儿找工具', async () => {
+  const { ctx, record } = makeCtx();
+  plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_test0002', mountScope: 'preset' });
+
+  // 桥接这一件事已经完全交给预设；宿主再挂一次就又变成全局可见了。
+  assert.equal(record.mounts.length, 0);
+  // 插件页、工具、技能与命令都还归宿主这一份，缩水只缩桥接。
+  assert.equal(record.tools.length, 11);
+  assert.equal(record.routes.length, 1);
+
+  const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+  const snap = await status.execute({});
+  assert.equal(snap.mountScope, 'preset');
+  assert.equal(snap.server.state, 'unmounted');
+  assert.match(snap.text, /桥接由「格式匠」预设提供/);
+
+  // 手动连接按钮要给出同一条说明，而不是一句「未挂载」。
+  const connect = record.tools.find((tool) => tool.name === 'formatjiang_connect');
+  const result = await connect.execute({});
+  assert.equal(result.ok, false);
+  assert.match(result.text, /「格式匠」预设/);
+});
+
+test('预设作用域那一份只挂桥接，不注册工具、提示、技能、命令与面板', async () => {
+  const { ctx, record } = makeCtx();
+  plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_preset01', bridgeOnly: true });
+  // 动态 import 与 ctx.plugin 都是异步的，等两拍让它走完。
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(record.tools.length, 0);
+  assert.equal(record.prompts.length, 0);
+  assert.equal(record.skills.length, 0);
+  assert.equal(record.commands.length, 0);
+  assert.equal(record.routes.length, 0);
+
+  assert.equal((record.plugins || []).length, 1, '预设里没有挂上 mcp 客户端');
+  const bridged = record.plugins[0];
+  assert.equal(bridged.config.serverName, 'formatjiang');
+  assert.equal(bridged.config.transport, 'stdio');
+  assert.equal(bridged.config.command, EXE);
+  assert.deepEqual(bridged.config.args, ['mcp', 'bridge', '--installation-id', 'ins_preset01']);
+  // 格式匠没开时连不上是常态，不能因此让整个会话装不起来。
+  assert.equal(bridged.config.failOnStartupError, false);
+});
+
+test('桥接挂在预设上时，系统提示先把「这个会话看不到业务工具」说在前面', () => {
+  const { ctx, record } = makeCtx();
+  plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_prompt01', mountScope: 'preset' });
+  const text = record.prompts[0].text;
+  assert.match(text, /只在「格式匠」预设的会话里加载/);
+  // 位置也要对：这句必须排在第一段说明后面，模型先读到它再读流程。
+  const lines = text.split('\n');
+  const scopeLine = lines.findIndex((line) => line.includes('只在「格式匠」预设的会话里加载'));
+  assert.ok(scopeLine > 0 && scopeLine < 6, `这行位置不对：${scopeLine}`);
+
+  // 宿主层自己挂的时候不该出现这句：那种会话里工具本来就是全的。
+  const host = makeCtx();
+  plugin.apply(host.ctx, { executablePath: EXE, installationId: 'ins_prompt02' });
+  assert.doesNotMatch(host.record.prompts[0].text, /只在「格式匠」预设的会话里加载/);
+});
+
+/**
+ * 交接台（两份实例之间那个临时文件）。
+ * 用例直接读写它，所以每个用例前后都要清干净、并丢掉插件里的读取缓存。
+ */
+function sharedFilePath() {
+  return process.env.FORMATJIANG_STATE_FILE;
+}
+
+function resetSharedFile() {
+  fs.rmSync(path.dirname(sharedFilePath()), { recursive: true, force: true });
+  plugin.__resetSharedCache();
+}
+
+function writeSharedFile(value) {
+  fs.mkdirSync(path.dirname(sharedFilePath()), { recursive: true });
+  fs.writeFileSync(sharedFilePath(), JSON.stringify(value), 'utf8');
+  plugin.__resetSharedCache();
+}
+
+function sharedFileText() {
+  plugin.__resetSharedCache();
+  try {
+    return fs.readFileSync(sharedFilePath(), 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+function readSharedFile() {
+  plugin.__resetSharedCache();
+  try {
+    return JSON.parse(fs.readFileSync(sharedFilePath(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+test('桥接交给预设时，宿主把「程序在哪、安装 ID 是什么」写到交接台', async () => {
+  resetSharedFile();
+  try {
+    const { ctx, record } = makeCtx();
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_handoff01', mountScope: 'preset' });
+    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    await status.execute({});
+
+    const shared = readSharedFile();
+    assert.equal(shared.hostTarget?.executable, EXE);
+    assert.equal(shared.hostTarget?.installationId, 'ins_handoff01');
+    assert.ok(shared.hostTarget?.at > 0);
+  } finally {
+    resetSharedFile();
+  }
+});
+
+test('预设那一份写了状态，宿主的面板与状态工具要能读到', async () => {
+  resetSharedFile();
+  try {
+    writeSharedFile({
+      presetBridge: { state: 'connected', toolCount: 110, lastError: '', at: Date.now() },
+    });
+    const { ctx, record } = makeCtx();
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_handoff02', mountScope: 'preset' });
+    // 装配时 snapshot 里会调用 handoffTarget —— 那一步会重写文件，所以先执行工具再断言。
+    writeSharedFile({
+      presetBridge: { state: 'connected', toolCount: 110, lastError: '', at: Date.now() },
+    });
+    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const snap = await status.execute({});
+
+    assert.equal(snap.ok, true, '预设里连上了，宿主这份的 ok 也该是 true');
+    assert.equal(snap.label, '已连接');
+    assert.equal(snap.presetBridge.toolCount, 110);
+    assert.match(snap.text, /预设桥接：connected/);
+  } finally {
+    resetSharedFile();
+  }
+});
+
+test('预设那一份连不上时，宿主要把原因和「多久以前」讲出来', async () => {
+  resetSharedFile();
+  try {
+    const { ctx, record } = makeCtx();
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_handoff03', mountScope: 'preset' });
+    writeSharedFile({
+      presetBridge: { state: 'failed', toolCount: 0, lastError: 'SdkError: Connection closed', at: Date.now() - 5 * 60 * 1000 },
+    });
+    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const snap = await status.execute({});
+
+    assert.equal(snap.ok, false);
+    assert.equal(snap.label, '预设里连不上');
+    assert.match(snap.detail, /5 分钟前/);
+    assert.ok(snap.hints.some((hint) => hint.includes('「格式匠」预设里的桥接连不上')), JSON.stringify(snap.hints));
+  } finally {
+    resetSharedFile();
+  }
+});
+
+test('预设那一份挂上桥接后把状态写给宿主', async () => {
+  resetSharedFile();
+  try {
+    const { ctx } = makeCtx();
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_handoff04', bridgeOnly: true });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    const shared = readSharedFile();
+    assert.equal(shared.presetBridge?.state, 'connected', JSON.stringify(shared));
+    assert.equal(shared.presetBridge?.toolCount, 3);
+  } finally {
+    resetSharedFile();
+  }
+});
+
+test('宿主还在挂桥接时，预设那一份不重复挂，并说明要怎么改', async () => {
+  resetSharedFile();
+  try {
+    writeSharedFile({ hostBridge: { mounted: true, at: Date.now() } });
+    const { ctx, record } = makeCtx();
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_guard01', bridgeOnly: true });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal((record.plugins || []).length, 0, '两份同时挂会出两套同名工具');
+    const shared = readSharedFile();
+    assert.equal(shared.presetBridge?.state, 'failed');
+    assert.match(shared.presetBridge?.lastError || '', /mountScope: preset/);
+  } finally {
+    resetSharedFile();
+  }
+});
+
+test('宿主已经通过 mcpManager 挂了同名服务器时，预设那一份认出来并让路', async () => {
+  resetSharedFile();
+  try {
+    const { ctx, record } = makeCtx();
+    // 模拟宿主那一份已经挂上（真实环境里它的 list() 会列出 formatjiang）。
+    ctx.mcpManager.register('formatjiang', { transport: 'stdio' });
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_guard02', bridgeOnly: true });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal((record.plugins || []).length, 0, '不认出来就会挂出第二套同名工具');
+    assert.match(sharedFileText(), /宿主那半边已经在挂桥接/);
+  } finally {
+    resetSharedFile();
+  }
+});
+
+
+test('交接台上超过十分钟的记录不再当成现在', async () => {
+  resetSharedFile();
+  try {
+    const { ctx, record } = makeCtx();
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_ttl01', mountScope: 'preset' });
+    writeSharedFile({
+      presetBridge: { state: 'connected', toolCount: 110, lastError: '', at: Date.now() - 11 * 60 * 1000 },
+    });
+    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const snap = await status.execute({});
+
+    assert.equal(snap.presetBridge, null, '过期记录不能当成现在的状态');
+    assert.equal(snap.ok, false);
+    assert.equal(snap.label, '由预设提供');
+    assert.doesNotMatch(snap.text, /预设桥接：connected/);
+  } finally {
+    resetSharedFile();
+  }
+});
+
+test('按安装目录拼另一个包的地址：只换包名那一段', () => {
+  const base = 'file:///D:/software/deepseek-harness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-tools/lib/index.js';
+  assert.equal(
+    plugin.siblingModuleUrl(base, '@deepseek-ai/dsh-tools', '@deepseek-ai/dsh-mcp-client'),
+    'file:///D:/software/deepseek-harness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-mcp-client/lib/index.js',
+  );
+  // 作用域那一段保持原样，只动包名：编码成 %40 的地址也照样拼得出来。
+  const encoded = 'file:///tmp/n/%40deepseek-ai/dsh-tools/lib/index.js';
+  assert.equal(
+    plugin.siblingModuleUrl(encoded, '@deepseek-ai/dsh-tools', '@deepseek-ai/dsh-mcp-client'),
+    'file:///tmp/n/%40deepseek-ai/dsh-mcp-client/lib/index.js',
+  );
+});
+
+test('拼不出来的地址返回空串，不瞎猜', () => {
+  assert.equal(plugin.siblingModuleUrl('', '@deepseek-ai/dsh-tools', '@deepseek-ai/dsh-mcp-client'), '');
+  assert.equal(plugin.siblingModuleUrl(undefined, '@deepseek-ai/dsh-tools', '@deepseek-ai/dsh-mcp-client'), '');
+  assert.equal(
+    plugin.siblingModuleUrl('file:///x/@deepseek-ai/dsh-scope/lib/index.js', '@deepseek-ai/dsh-tools', '@deepseek-ai/dsh-mcp-client'),
+    '',
+  );
+});
+
+test('预设那一份优先用宿主加载器取 mcp-client：parent 给的是 profile 配置地址', async () => {
+  resetSharedFile();
+  try {
+    const calls = [];
+    const fakeModule = {
+      Config: (options) => options,
+      connectionStatusOf: () => undefined,
+      apply() {},
+      name: 'mcp-client',
+    };
+    const loader = {
+      internal: {
+        async import(specifier, parent, attributes) {
+          calls.push({ specifier, parent, attributes });
+          return fakeModule;
+        },
+      },
+    };
+    const { ctx, record } = makeCtx({ loader, baseUrl: 'file:///C:/Users/20182/.dsh/profiles/desktop/cordis.patch.yml' });
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_loader01', bridgeOnly: true });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.equal(calls.length, 1, JSON.stringify(calls));
+    assert.equal(calls[0].specifier, '@deepseek-ai/dsh-mcp-client');
+    assert.match(calls[0].parent, /profiles\/desktop\/cordis\.patch\.yml$/);
+    assert.equal((record.plugins || []).length, 1, '取到的模块要交给 ctx.plugin 挂桥接');
+    assert.equal(record.plugins[0].pluginObject, fakeModule);
+    assert.equal(record.plugins[0].config.serverName, 'formatjiang');
+  } finally {
+    resetSharedFile();
+  }
+});
+
+test('宿主加载器也取不到时退回普通 import，桥接照样挂上', async () => {
+  resetSharedFile();
+  try {
+    let called = 0;
+    const loader = {
+      internal: {
+        async import() {
+          called += 1;
+          throw new Error('Cannot find package');
+        },
+      },
+    };
+    const { ctx, record } = makeCtx({ loader, baseUrl: 'file:///C:/Users/20182/.dsh/profiles/desktop/cordis.patch.yml' });
+    plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_loader02', bridgeOnly: true });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    assert.equal(called, 1, '加载器那条路要先试一次');
+    assert.equal((record.plugins || []).length, 1, '退回普通 import 后仍要挂上桥接');
+    const shared = readSharedFile();
+    assert.equal(shared.presetBridge?.state, 'connected', JSON.stringify(shared));
+  } finally {
+    resetSharedFile();
+  }
+});
+
+test('预设那一份连接放弃后按节奏重挂，重挂不会被「已卸载」标记钉死', async () => {
+  resetSharedFile();
+  const realSetTimeout = globalThis.setTimeout;
+  const scheduled = [];
+  globalThis.setTimeout = (cb, ms) => {
+    const handle = { cb, ms, unref() { return handle; } };
+    scheduled.push(handle);
+    return handle;
+  };
+  try {
+    const { ctx, record } = makeCtx();
+    plugin.apply(ctx, { bridgeOnly: true, executablePath: EXE, installationId: 'ins_remount01' });
+    await new Promise((resolve) => realSetTimeout(resolve, 40));
+    assert.equal((record.plugins || []).length, 1, '先挂上第一份');
+    const first = record.lastPluginHandle;
+
+    first.fire({ state: 'failed', reason: 'gave-up', lastError: 'SdkError: Connection closed' });
+    assert.equal(scheduled.length, 1, JSON.stringify(scheduled.map((item) => item.ms)));
+    assert.equal(scheduled[0].ms, 15000);
+
+    scheduled[0].cb();
+    await new Promise((resolve) => realSetTimeout(resolve, 40));
+    assert.equal(first.disposed, 1, '重挂前要把旧的那一份卸掉');
+    assert.equal((record.plugins || []).length, 2, '重挂要真的再 ctx.plugin 一次');
+    assert.equal(record.lastPluginHandle.listenerCount(), 1, '新的一份要重新订阅状态');
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    resetSharedFile();
+  }
+});
+
+test('预设那一份重挂最多三次，连上之后重新计数', async () => {
+  resetSharedFile();
+  const realSetTimeout = globalThis.setTimeout;
+  const scheduled = [];
+  globalThis.setTimeout = (cb, ms) => {
+    const handle = { cb, ms, unref() { return handle; } };
+    scheduled.push(handle);
+    return handle;
+  };
+  try {
+    // 每一份新挂上来的实例一开始就是 failed：这样才测得到连续失败时退避递增。
+    const { ctx, record } = makeCtx({ pluginStatus: { state: 'failed', lastError: 'SdkError: Connection closed' } });
+    plugin.apply(ctx, { bridgeOnly: true, executablePath: EXE, installationId: 'ins_remount02' });
+    await new Promise((resolve) => realSetTimeout(resolve, 40));
+
+    for (let round = 1; round <= 3; round += 1) {
+      record.lastPluginHandle.fire({ state: 'failed', lastError: 'SdkError: Connection closed' });
+      const timer = scheduled[scheduled.length - 1];
+      assert.equal(timer.ms, [15000, 30000, 60000][round - 1], `第 ${round} 次的间隔`);
+      timer.cb();
+      await new Promise((resolve) => realSetTimeout(resolve, 40));
+    }
+    const before = scheduled.length;
+    record.lastPluginHandle.fire({ state: 'failed', lastError: 'SdkError: Connection closed' });
+    assert.equal(scheduled.length, before, '三次用完就不再排定时器');
+
+    // 连上之后次数归零：再断一次仍然是 15 秒起算。
+    record.lastPluginHandle.fire({ state: 'connected', toolCount: 3, connectedAt: Date.now() });
+    await new Promise((resolve) => realSetTimeout(resolve, 10));
+    record.lastPluginHandle.fire({ state: 'failed', lastError: 'SdkError: Connection closed' });
+    assert.equal(scheduled[scheduled.length - 1].ms, 15000);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    resetSharedFile();
   }
 });

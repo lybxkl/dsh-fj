@@ -171,7 +171,12 @@ function pickCard(name, key, react = React) {
   const { ctx, registrations } = makeSlots();
   const module = entry.factory((id) => (id === 'react' ? react : null));
   module.apply(ctx);
-  const found = registrations.find((item) => item.target.name === name && (key === undefined || item.target.key === key));
+  // 槽位标识并不统一：工具卡用 key，设置分节用 id，两种都认。
+  const found = registrations.find(
+    (item) =>
+      item.target.name === name &&
+      (key === undefined || item.target.key === key || item.target.id === key)
+  );
   assert.ok(found, `没有注册 ${name}${key ? ` / ${key}` : ''}`);
   return found;
 }
@@ -686,4 +691,154 @@ test('已连接时给出「断开连接」，断开后换成恢复提示', async
   assert.doesNotMatch(offline, /断开连接/);
   assert.match(offline, /重新连接/);
   assert.match(offline, /已手动断开/);
+});
+
+test('读不到状态时给出原因与重试，而不是一直停在「正在读取」', async () => {
+  const react = createHookReact();
+  const previousFetch = globalThis.fetch;
+  const previousInterval = globalThis.setInterval;
+  // 轮询会把进程吊住；这里只验证首帧失败后的呈现。
+  globalThis.setInterval = () => 0;
+  globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+  try {
+    const page = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+    const props = { view: 'page' };
+    render(page(props));
+    await flush();
+    react.reset();
+    const rendered = text(page(props));
+
+    assert.doesNotMatch(rendered, /正在读取格式匠状态/, '失败后不应继续显示「正在读取」');
+    assert.match(rendered, /读不到格式匠状态/);
+    assert.match(rendered, /HTTP 404/);
+    assert.match(rendered, /重试/);
+    assert.match(rendered, /内置插件/, '要告诉用户先去哪儿看插件状态');
+  } finally {
+    globalThis.fetch = previousFetch;
+    globalThis.setInterval = previousInterval;
+  }
+});
+
+test('设置页读不到状态时也把原因写出来', async () => {
+  const react = createHookReact();
+  const previousFetch = globalThis.fetch;
+  const previousInterval = globalThis.setInterval;
+  globalThis.setInterval = () => 0;
+  globalThis.fetch = async () => {
+    const error = new Error('offline');
+    throw error;
+  };
+  try {
+    const settings = pickCard('settings.section', 'formatjiang', react).component;
+    render(settings({}));
+    await flush();
+    react.reset();
+    const rendered = text(settings({}));
+
+    assert.match(rendered, /读不到格式匠状态/);
+    assert.match(rendered, /offline/);
+    assert.match(rendered, /重试/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    globalThis.setInterval = previousInterval;
+  }
+});
+
+test('端口没在听时清单写「当前未监听」，不把配置当成已就绪', async () => {
+  const react = createHookReact();
+  const fixture = stateFixture();
+  fixture.formatjiang.listening = false;
+  const restore = stubStateFetch(fixture);
+  try {
+    const settings = pickCard('settings.section', 'formatjiang', react).component;
+    render(settings({}));
+    await flush();
+    react.reset();
+    const rendered = text(settings({}));
+
+    assert.match(rendered, /当前未监听/, '标题要把「配置开了」和「真的在听」分开');
+    assert.match(rendered, /没有监听/, '要说明端口没有监听、格式匠可能没在运行');
+  } finally {
+    restore();
+  }
+});
+
+test('端口在听时清单不加「未监听」，也不改标题', async () => {
+  const react = createHookReact();
+  const fixture = stateFixture();
+  fixture.formatjiang.listening = true;
+  const restore = stubStateFetch(fixture);
+  try {
+    const settings = pickCard('settings.section', 'formatjiang', react).component;
+    render(settings({}));
+    await flush();
+    react.reset();
+    const rendered = text(settings({}));
+
+    assert.doesNotMatch(rendered, /当前未监听/);
+  } finally {
+    restore();
+  }
+});
+
+test('桥接交给预设时，设置页说清在哪用，并带上预设里最近的状态', async () => {
+  const react = createHookReact();
+  const state = stateFixture({
+    mountScope: 'preset',
+    ok: true,
+    tone: 'ok',
+    label: '已连接',
+    detail: '110 个工具可用（「格式匠」预设 · 刚刚）',
+    server: { name: 'formatjiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
+    presetBridge: { state: 'connected', toolCount: 110, lastError: '', at: Date.now() },
+  });
+  const restore = stubStateFetch(state);
+  try {
+    const entry = loadClient();
+    const { ctx, registrations } = makeSlots();
+    const module = entry.factory((id) => (id === 'react' ? react : null));
+    module.apply(ctx);
+    const settings = registrations.find((item) => item.target.name === 'settings.section');
+    render(settings.component({}));
+    await flush();
+    react.reset();
+    const body = text(settings.component({}));
+
+    assert.match(body, /「格式匠」预设/);
+    assert.match(body, /110 个工具可用/);
+    // 预设模式下这两个按钮按了也没用，不该出现。
+    assert.ok(!body.includes('重新连接'), body);
+    assert.ok(!body.includes('断开连接'), body);
+    assert.match(body, /打开格式匠/);
+  } finally {
+    restore();
+  }
+});
+
+test('预设里没有记录时，插件页不画红灯，改说明去哪儿用', async () => {
+  const react = createHookReact();
+  const state = stateFixture({
+    mountScope: 'preset',
+    tone: 'idle',
+    label: '由预设提供',
+    detail: '桥接由「格式匠」预设提供',
+    server: { name: 'formatjiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
+    presetBridge: null,
+  });
+  const restore = stubStateFetch(state);
+  try {
+    const card = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+    const props = { view: 'card' };
+    render(card(props));
+    await flush();
+    react.reset();
+    const body = text(card(props));
+
+    assert.match(body, /桥接由「格式匠」预设提供/);
+    // 「未挂载」是配置结果：不能再出现「桥接没有挂上，按下面的按钮重新连接」这类待修文案。
+    assert.ok(!body.includes('桥接没有挂上'), body);
+    assert.match(body, /由「格式匠」预设提供/);
+  } finally {
+    restore();
+  }
 });

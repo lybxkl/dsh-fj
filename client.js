@@ -24,10 +24,24 @@
        * 数据
        * ------------------------------------------------------------------ */
 
+      /**
+       * 读插件状态。
+       *
+       * 以前失败只把计数加一，界面上永远停在「正在读取」——一个 404 看起来和
+       * 「宿主忙」完全一样，排障时没有任何线索。现在把失败原因带出来，页面渲染
+       * 时直接显示，并给一个「重试」按钮。
+       */
       function useFormatjiangState(active) {
         var pair = useState(null);
         var state = pair[0];
         var setState = pair[1];
+        var errPair = useState('');
+        var error = errPair[0];
+        var setError = errPair[1];
+        // 重试令牌：加一就重跑下面的 effect（清掉退避、立刻再问一次）。
+        var retryPair = useState(0);
+        var retryToken = retryPair[0];
+        var setRetryToken = retryPair[1];
         var alive = useRef(true);
         useEffect(function () {
           alive.current = true;
@@ -57,9 +71,19 @@
               .then(function (body) {
                 if (!alive.current) return;
                 failures = 0;
+                setError('');
                 if (body && body.state) setState(body.state);
               })
-              .catch(function () { failures += 1; /* 不放错误状态，下一拍再试 */ })
+              .catch(function (failure) {
+                if (!alive.current) return;
+                failures += 1;
+                var reason = describeError(failure);
+                setError(reason);
+                // 每 10 次记一条就够：轮询失败会一直重复，日志刷屏反而没人看。
+                if (failures === 1 || failures % 10 === 0) {
+                  try { console.warn('[formatjiang] 读取插件状态失败：' + reason); } catch (e) { /* 没 console 的环境忽略 */ }
+                }
+              })
               .then(function () { inFlight = false; });
           }
 
@@ -86,8 +110,21 @@
               /* ignore */
             }
           };
-        }, [active]);
-        return [state, setState];
+        }, [active, retryToken]);
+        return {
+          state: state,
+          error: error,
+          setState: setState,
+          retry: function () { setRetryToken(retryToken + 1); },
+        };
+      }
+
+      /** 把失败翻译成用户能读懂、排障时也用得上的一句话。 */
+      function describeError(error) {
+        if (!error) return '未知原因';
+        if (error.name === 'AbortError') return '请求超时：宿主 10 秒内没有响应';
+        var message = String(error.message || error);
+        return error.status ? 'HTTP ' + error.status + '（' + API + '/state）：' + message : message;
       }
 
       /**
@@ -108,8 +145,15 @@
           init.body = JSON.stringify((options && options.body) || {});
         }
         return fetch(API + action, init).then(function (res) {
-          return res.json().then(function (body) {
-            return body || {};
+          return res.json().catch(function () { return {}; }).then(function (body) {
+            var value = body || {};
+            // 404/500 不能当成「空状态」：把它变成一条带状态码的错误，页面才有话可说。
+            if (!res.ok) {
+              var failure = new Error(value.error || ('接口返回 ' + res.status));
+              failure.status = res.status;
+              throw failure;
+            }
+            return value;
           });
         }).then(
           function (body) { clearTimeout(timer); return body; },
@@ -294,6 +338,29 @@
         return h('style', { dangerouslySetInnerHTML: { __html: CSS } });
       }
 
+      /**
+       * 状态还没读到时显示的东西。
+       *
+       * 没有失败原因就是「正在读取」；有原因就把原文和重试按钮一起给出来——
+       * 以前这里只会一直转，读不到接口和读得慢在界面上分不出来。
+       */
+      function StatusPlaceholder(props) {
+        var root = props && props.page ? 'fj fj-page' : 'fj';
+        if (!props || !props.error) {
+          return h('div', { className: root }, h(Style), h('div', { className: 'fj-empty' }, '正在读取格式匠状态'));
+        }
+        return h('div', { className: root }, h(Style),
+          h('div', { className: 'fj-empty' }, '读不到格式匠状态：' + props.error),
+          h('div', { className: 'fj-meta' },
+            '插件页接口 ' + API + '/state 没有返回。先看 设置 → 内置插件 里这一项的状态与错误；'
+            + '刚装好或刚改过插件时需要重启 DSH。'),
+          h('div', { className: 'fj-foot' },
+            h('button', { className: 'fj-btn fj-btn-primary', onClick: props.onRetry }, '重试'),
+            h('span', { className: 'fj-grow' }),
+            h('span', { className: 'fj-meta' }, '在对话里输入 /formatjiang 诊断 可看到装配失败原因')),
+        );
+      }
+
       function toneClass(tone) {
         if (tone === 'ok') return 'fj-chip fj-chip-ok';
         if (tone === 'warn') return 'fj-chip fj-chip-warn';
@@ -343,6 +410,36 @@
         if (!Number.isFinite(remain) || remain <= 0) return '即将重试';
         // 文案写「约」：这个数字是渲染时算的，卡片不会秒级重绘，别承诺精确倒计时。
         return '约 ' + Math.max(1, Math.round(remain / 1000)) + ' 秒后重试';
+      }
+
+      /**
+       * 预设那一份写回来的桥接状态。
+       *
+       * 这个面板在别的会话里也要能答「格式匠到底通没通」，所以除了状态本身还要带时间：
+       * 十分钟前的「已连接」不是现在的事实，说清楚比说漂亮重要。
+       */
+      function presetBridgeText(bridge) {
+        var when = describeAge(bridge && bridge.at);
+        var state = bridge && bridge.state;
+        if (state === 'connected') {
+          return '「格式匠」预设里已连接：' + ((bridge.toolCount || 0) + ' 个工具可用') + '（' + when + '）';
+        }
+        if (state === 'failed') {
+          return '「格式匠」预设里的桥接连不上：' + (bridge.lastError || '没有给出原因') + '（' + when + '）；先打开格式匠，再在那个会话里重开。';
+        }
+        if (state === 'closed') {
+          return '「格式匠」预设那一份已关闭（' + when + '）。新建会话时选这个预设即可重新加载。';
+        }
+        return '「格式匠」预设那一份正在连接（' + when + '）。';
+      }
+
+      function describeAge(at) {
+        var seconds = Math.max(0, Math.round((Date.now() - (Number(at) || 0)) / 1000));
+        if (!at) return '时间未知';
+        if (seconds < 60) return '刚刚';
+        var minutes = Math.round(seconds / 60);
+        if (minutes < 60) return minutes + ' 分钟前';
+        return Math.round(minutes / 60) + ' 小时前';
       }
 
       /** 连接卡与设置页共用同一套动作：打开、重连、复制诊断信息。 */
@@ -475,9 +572,9 @@
       }
 
       function ConnectionCard() {
-        var pair = useFormatjiangState(true);
-        var state = pair[0];
-        var setState = pair[1];
+        var source = useFormatjiangState(true);
+        var state = source.state;
+        var setState = source.setState;
         var actions = useConnectionActions(setState);
         var pending = actions.pending;
         var copyState = actions.copyState;
@@ -486,21 +583,35 @@
         var copyDiagnostics = actions.copyDiagnostics;
 
         if (!state) {
-          return h('div', { className: 'fj' }, h(Style), h('div', { className: 'fj-empty' }, '正在读取格式匠状态'));
+          return h(StatusPlaceholder, { error: source.error, onRetry: source.retry });
         }
 
         var f = state.formatjiang || {};
         var server = state.server || {};
         var hints = state.hints || [];
-        var broken = state.tone === 'error' || server.state === 'failed' || server.state === 'unmounted';
+        // 预设作用域下「未挂载」是配置结果，不是故障：别把它画成待修的红条。
+        var presetScope = state.mountScope === 'preset';
+        var presetBridge = state.presetBridge || null;
+        var broken = !presetScope && (state.tone === 'error' || server.state === 'failed' || server.state === 'unmounted');
         var waiting = retryHint(server) || autoHint(state);
 
         var capabilities = [
-          row('工具', server.state === 'connected' ? server.toolCount + ' 个可用' : '暂不可用', 'tools'),
+          row('工具', server.state === 'connected'
+            ? server.toolCount + ' 个可用'
+            : (presetScope
+              ? (presetBridge && presetBridge.state === 'connected'
+                ? presetBridge.toolCount + ' 个可用（预设里）'
+                : '由「格式匠」预设提供')
+              : '暂不可用'), 'tools'),
           row('写入', f.safeWrite ? '每次需要确认' : '未开启', 'write'),
           row('连接方式', 'stdio 桥接', 'bridge'),
         ];
-        if (f.port) capabilities.push(row('本机端口', String(f.port), 'port'));
+        if (f.port) {
+          // 连上时端口一定在听；没连上时补一句事实，别让人以为「有端口号就是起来了」。
+          var portText = String(f.port)
+            + (f.listening === false ? '（未监听）' : f.listening === true ? '（正在监听）' : '');
+          capabilities.push(row('本机端口', portText, 'port'));
+        }
 
         var versions = [
           row('程序', f.executable ? shortPath(f.executable) : '未找到', 'exe'),
@@ -526,6 +637,12 @@
 
         if (notice) {
           children.push(h('div', { key: 'notice', className: 'fj-note' }, notice));
+        }
+
+        if (presetScope) {
+          children.push(h('div', { key: 'scope', className: 'fj-note' }, presetBridge
+            ? presetBridgeText(presetBridge)
+            : '桥接由「格式匠」预设提供：新建会话时选这个预设，格式匠的工具才会加载；其他预设的会话不加载它们。'));
         }
 
         if (broken) {
@@ -556,16 +673,16 @@
           }, '打开格式匠'),
           h('button', {
             className: 'fj-btn',
-            disabled: pending === '/connect',
+            disabled: presetScope || pending === '/connect',
             onClick: function () { run('/connect'); },
           }, '重新连接'),
-          server.state === 'connected'
+          presetScope ? null : (server.state === 'connected'
             ? h('button', {
               className: 'fj-btn fj-btn-text',
               disabled: pending === '/disconnect',
               onClick: function () { run('/disconnect'); },
             }, '断开连接')
-            : null,
+            : null),
           h('span', { className: 'fj-grow' }),
           h('button', {
             className: 'fj-btn fj-btn-text',
@@ -931,29 +1048,40 @@
        * 动作与插件页共用同一套 useConnectionActions，行为不会两处不一致。
        */
       function SettingsPanel() {
-        var pair = useFormatjiangState(true);
-        var state = pair[0];
-        var setState = pair[1];
+        var source = useFormatjiangState(true);
+        var state = source.state;
+        var setState = source.setState;
         var actions = useConnectionActions(setState);
 
         if (!state) {
-          return h('div', { className: 'fj fj-page' }, h(Style), h('div', { className: 'fj-empty' }, '正在读取格式匠状态'));
+          return h(StatusPlaceholder, { error: source.error, onRetry: source.retry, page: true });
         }
 
         var f = state.formatjiang || {};
         var server = state.server || {};
         var connected = server.state === 'connected';
+        // 桥接交给预设时，「连没连上」这件事不在这个面板里：本会话没选那个预设就看不到工具，
+        // 面板只陈述事实，不给「重新连接」这种按了也没用的按钮。
+        var presetScope = state.mountScope === 'preset';
+        var presetBridge = state.presetBridge || null;
         var mcpReady = f.mcpEnabled === true;
         var installReady = Boolean(f.installationId);
+        // 配置说「已开启」与端口真的在听是两件事：后者才是桥接能不能起来的前提。
+        // listening 为 null 表示还没探到，这时不要凭空加一句「未监听」吓人。
+        var silent = mcpReady && f.listening === false;
 
         var steps = [
           h(Step, {
             key: 'step1',
             index: 1,
             done: mcpReady,
-            title: mcpReady ? '格式匠的 MCP 服务已开启' : '打开格式匠的 MCP 服务',
+            title: mcpReady
+              ? (silent ? '格式匠的 MCP 服务已开启（当前未监听）' : '格式匠的 MCP 服务已开启')
+              : '打开格式匠的 MCP 服务',
             hint: mcpReady
-              ? ('本机端口 ' + f.port)
+              ? (silent
+                ? ('本机端口 ' + f.port + ' 没有监听：格式匠没在运行，或它的服务还没起来。点「打开格式匠」等它完全启动。')
+                : ('本机端口 ' + f.port))
               : '格式匠 → 设置 → MCP →「本机服务」里打开「启用 MCP 本机服务」，再点「保存并应用」。',
           }),
           h(Step, {
@@ -968,14 +1096,22 @@
           h(Step, {
             key: 'step3',
             index: 3,
-            done: connected,
-            title: connected ? ('已连接，' + server.toolCount + ' 个工具可用') : '把桥接连上',
-            hint: connected
-              ? '下面几个按钮只在排障时才用。'
-              : state.paused
-                ? '已手动断开；点「重新连接」恢复。'
-                : ((server.lastError ? server.lastError + '。' : '')
-                  + (autoHint(state) || '点下面的「重新连接」。格式匠没在运行就先点「打开格式匠」。')),
+            done: presetScope ? Boolean(presetBridge && presetBridge.state === 'connected') : connected,
+            title: presetScope
+              ? (presetBridge && presetBridge.state === 'connected'
+                ? ('「格式匠」预设里已连接，' + (presetBridge.toolCount || 0) + ' 个工具可用')
+                : '在「格式匠」预设的会话里使用')
+              : (connected ? ('已连接，' + server.toolCount + ' 个工具可用') : '把桥接连上'),
+            hint: presetScope
+              ? (presetBridge
+                ? presetBridgeText(presetBridge)
+                : '桥接挂在「格式匠」预设上：新建会话时选这个预设，格式匠的工具才会加载；其他预设的会话不加载它们，省下每轮的开销。')
+              : (connected
+                ? '下面几个按钮只在排障时才用。'
+                : state.paused
+                  ? '已手动断开；点「重新连接」恢复。'
+                  : ((server.lastError ? server.lastError + '。' : '')
+                    + (autoHint(state) || '点下面的「重新连接」。格式匠没在运行就先点「打开格式匠」。'))),
           }),
         ];
 
@@ -994,7 +1130,9 @@
               h('span', { className: toneClass(state.tone) }, h('span', { className: 'fj-dot' }), state.label),
               h('span', { className: 'fj-right' }, state.pluginVersion ? 'v' + state.pluginVersion : ''),
             ),
-            h('div', { className: 'fj-lead' }, '把本机格式匠的论文工具接进对话：套版、提交检查、资料与页码取证。下面三步走完就能用。'),
+            h('div', { className: 'fj-lead' }, presetScope
+              ? '这里管格式匠本身：程序、数据目录、本机接入与 MCP 服务。格式匠的工具挂在「格式匠」预设上，新建会话时选那个预设就会加载。'
+              : '把本机格式匠的论文工具接进对话：套版、提交检查、资料与页码取证。下面三步走完就能用。'),
             h('div', { className: 'fj-body' }, h('div', { className: 'fj-group' }, steps)),
             connected || state.catalog
               ? h(CatalogBlock, {
@@ -1009,18 +1147,18 @@
                 disabled: actions.pending === '/open' || !f.executable,
                 onClick: function () { actions.run('/open'); },
               }, '打开格式匠'),
-              h('button', {
+              presetScope ? null : h('button', {
                 className: 'fj-btn',
                 disabled: actions.pending === '/connect',
                 onClick: function () { actions.run('/connect'); },
               }, '重新连接'),
-              connected
+              presetScope ? null : (connected
                 ? h('button', {
                   className: 'fj-btn fj-btn-text',
                   disabled: actions.pending === '/disconnect',
                   onClick: function () { actions.run('/disconnect'); },
                 }, '断开连接')
-                : null,
+                : null),
               h('span', { className: 'fj-grow' }),
               h('button', { className: 'fj-btn fj-btn-text', onClick: actions.copyDiagnostics }, actions.copyState || '复制诊断信息'),
             ),

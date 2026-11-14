@@ -1,0 +1,12 @@
+{
+  "name": "@local/formatjiang-preset",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "「格式匠」Agent 预设：与 cordis 预设同一份组成，另加一条只在预设作用域里挂的格式匠桥接。",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
