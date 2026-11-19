@@ -16,7 +16,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 import { defineTool as defineToolRaw } from '@deepseek-ai/dsh-tools';
@@ -50,7 +50,9 @@ const TOOL_CALL_TIMEOUT_MS = 270000;
  * 不然用户只会看到「未挂载」。
  */
 const MOUNT_SCOPE_HINT = {
-  preset: '桥接由「格式匠」预设提供：选了这个预设的会话才加载这些工具；格式匠没在运行时先调用 formatjiang_open',
+  // 只陈述分工，不下「你没选预设」的结论：这句话会原样贴进工具结果，模型会照着它
+  // 向用户解释，而「会话选了预设、桥接也连上了」与这句话字面上并不冲突。
+  preset: '业务工具由「格式匠」预设里的官方 mcp 客户端提供，只对选了这个预设的会话可见；宿主工具（附件、会话身份）走独立的本机通道，不受它影响',
   off: '插件配置里关掉了桥接（mountScope: off），格式匠工具需要你在别处自己配 mcp 客户端',
 };
 
@@ -237,13 +239,20 @@ const SKILL_CONTENT = [
   '',
   '## 连接异常',
   '',
-  '工具报连接错误或调用超时，先 `formatjiang_status`；格式匠没在运行就调用 `formatjiang_open`（它会启动应用并等到端口就绪再返回），起来后桥接自动重连，不需要再操作连接。只有 `formatjiang_status` 里的 mountScope 是 host、确实要重建连接时才用 `formatjiang_connect`。不要在断线状态下反复重试业务工具，也不要把连接失败说成论文本身的问题。',
+  '格式匠有两条通道，先分清是哪一条出问题，别互相等：',
+  '',
+  '- **业务工具**（`mcp__formatjiang__*`）：由 MCP 连接提供。preset 模式下来自「格式匠」预设里的官方 mcp 客户端，本会话没选那个预设就没有它们；格式匠退出后它们会从工具表消失，重连回来后外部服务工具名还可能带新的随机后缀，以当前工具表为准。',
+  '- **宿主工具**（`formatjiang_*`）：走独立的本机通道（`格式匠.exe mcp host`），只要程序与安装 ID 在、格式匠在运行就能用，不需要业务工具先出现。附件收件、会话绑定、成品取回都走这条。',
+  '',
+  '工具报连接错误或调用超时，先 `formatjiang_status`：它分别报桥接与宿主通道。格式匠没在运行就 `formatjiang_open`（会等端口就绪）；`formatjiang_connect` 只在 mountScope 是 host 时才有意义，preset 模式下它只会说「不用重连」。不要在断线状态下反复重试业务工具，也不要把连接失败说成论文本身的问题。',
+  '',
+  '用户要求的是「在格式匠里建论文 / 套版」而这条链路走不通时，停下来把阻塞点与下一步讲清楚并问用户；不要用手写脚本排版冒充格式匠的产物。',
   '',
   '## 一份新稿从对话走到成品',
   '',
   '这是最长的一条链，中途任何一步都可能中断，所以每步都留下可以用编号接着做的位置。',
   '',
-  '1. `formatjiang_stage_attachment({ path })` 把用户交给你的文件复制进格式匠收件区，拿到 `file_id`；收件区只接受这一步送进去的文件。',
+  '1. `formatjiang_stage_attachment({ path })` 把用户交给你的文件复制进格式匠收件区，拿到 `file_id`；这一步走宿主通道，不依赖业务工具是否在表里，收件区也只接受这一步送进去的文件。',
   '2. 暂存工具已经通过宿主通道登记附件并返回 file_id，不要再调用 receive_file；它还会绑定本次真实聊天。',
   '3. `formatjiang_import_document({ file_id, as_new_paper, request_id })`：新建论文；或传 `paper_id`（可加 `parent_version_id`）往既有论文追加版本。两者必须二选一，都不给会直接报错，不会替你新建论文。返回 `version_id` 后再进下一步；不要跳过导入直接改原文件。',
   '4. `formatjiang_session({ action: "bind", paper_id, version_id })` 把本机绑定到这篇论文（绑定按本机共享，所有对话共用一份）；换会话或断线后用 `formatjiang_session({ action: "get" })` 取回，不要重新问用户是哪一篇。',
@@ -332,6 +341,37 @@ const SKILL_CONTENT = [
 
 function okText(text) {
   return [{ type: 'text', text }];
+}
+
+function nestedId(value, keys, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 4) return '';
+  for (const key of keys) {
+    const found = value[key];
+    if (found !== undefined && found !== null && found !== '') return found;
+  }
+  for (const child of Object.values(value)) {
+    if (!child || typeof child !== 'object' || Array.isArray(child)) continue;
+    const found = nestedId(child, keys, depth + 1);
+    if (found !== '') return found;
+  }
+  return '';
+}
+
+function researchCursor(start) {
+  const seen = new Set();
+  let dir = start;
+  for (let i = 0; i < 4 && dir; i += 1) {
+    if (seen.has(dir)) break;
+    seen.add(dir);
+    const file = path.join(dir, '.workbench', 'cursor.json');
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch { /* 继续向上找研究项目 */ }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
 }
 
 function normalizeConfig(raw) {
@@ -1235,6 +1275,33 @@ export function apply(ctx, rawConfig = {}) {
   }
 
   /**
+   * 宿主通道（`格式匠.exe mcp host`）的前置条件。
+   *
+   * 它和桥接是两条独立的路，不能拿桥接状态当它的门禁：
+   *   - 桥接把 110 个业务工具注册进工具表；preset 模式下这件事归预设里的官方 mcp 客户端，
+   *     宿主这一份看不到它的连接状态（只有旧的 bridgeOnly 配置会写交接记录）。
+   *   - 宿主通道按需起一个一次性子进程，用聊天身份把附件收件、会话绑定送进格式匠；
+   *     它只需要「程序 + 安装 ID + 格式匠在运行」，与工具表里有没有 mcp__formatjiang__* 无关。
+   *
+   * 这里只看配置层的事实（程序、安装 ID、有没有手动断开、是不是正在装更新），不看端口：
+   * 端口是异步探的，刚 formatjiang_open 完那一两秒它还可能是旧值，拿它当门禁会把本来
+   * 能用的调用挡掉——那正是「stage_attachment 一直说还没连上」的根因。应用没起来时由
+   * 子进程原话说明，调用方在错误里补一句「先 formatjiang_open」。
+   */
+  function hostChannel() {
+    const target = state.target;
+    if (state.paused) return { ok: false, reason: '插件已手动断开，先调用 formatjiang_connect 恢复' };
+    if (updateInProgress()) return { ok: false, reason: '格式匠正在安装更新，装完再试' };
+    if (!target?.executable) {
+      return { ok: false, reason: target?.error || `没有找到格式匠程序（${EXE_NAME}），可在插件配置里填写 executablePath` };
+    }
+    if (!target?.installationId) {
+      return { ok: false, reason: target?.error || '没有找到可用的本机安装 ID：在格式匠 设置 → MCP →「连接外部助手」里应用一次' };
+    }
+    return { ok: true, reason: '' };
+  }
+
+  /**
    * 格式匠的网关端口是否在监听。
    *
    * 「用户完全退出」这条错误会一直留在宿主的状态里，直到下一次连接成功为止；
@@ -1243,7 +1310,12 @@ export function apply(ctx, rawConfig = {}) {
    */
   function gatewayListening() {
     const settings = readMcpSettings(state.target?.dataDir);
-    return probePort(Number(settings?.port) || 0);
+    const port = Number(settings?.port) || 0;
+    // 读不到端口不等于没在运行：数据目录还没解析出来、或格式匠还没写过配置时，
+    // 这里没有任何可探测的目标，答案是「不知道」（null），不是 false。把未知说成
+    // 「没在运行」会误导用户和模型去重启一个其实开着的应用。
+    if (!port) return Promise.resolve(null);
+    return probePort(port);
   }
 
   /** 连一下指定端口：只回答「现在有没有人在听」，不读配置、不带业务语义。 */
@@ -1453,13 +1525,28 @@ export function apply(ctx, rawConfig = {}) {
     if (typeof chat !== 'string' || !chat.trim()) return Promise.reject(new Error('宿主没有提供真实聊天标识，请从对话内调用'));
     if (exec?.signal?.aborted) return Promise.reject(new Error('本次操作已取消'));
     const snap = snapshot();
-    if (!snap.ok) return Promise.reject(new Error('格式匠还没连上，请先恢复连接'));
+    // 走的是宿主通道（一次性 mcp host 子进程），不经过桥接：snap.ok 表示「业务工具那条
+    // 桥接连上了」，在 preset 模式下宿主这一份永远看不到它，用它当门禁会把附件与会话
+    // 操作全部挡死。这里只确认「起得起进程」，连不上由子进程自己的原话交代。
+    const channel = hostChannel();
+    if (!channel.ok) return Promise.reject(new Error(`格式匠宿主通道不可用：${channel.reason}`));
     return new Promise((resolve, reject) => {
       const child = execFile(snap.formatjiang.executable,
         ['mcp', 'host', '--installation-id', snap.formatjiang.installationId, '--chat-id', chat],
         { windowsHide: true, timeout: 302000, maxBuffer: 2 * 1024 * 1024, signal: exec?.signal },
         (error, stdout, stderr) => {
-          if (error) return reject(new Error(error.name === 'AbortError' ? '本次操作已取消；已开始的业务请查询原任务，不要换编号重发' : (String(stderr || '').trim() || error.message)));
+          if (error) {
+            if (error.name === 'AbortError') {
+              return reject(new Error('本次操作已取消；已开始的业务请查询原任务，不要换编号重发'));
+            }
+            // 应用没起时子进程只会丢一句连接失败；补一句用户能照做的下一步。
+            const message = String(stderr || '').trim() || String(error.message || error);
+            const port = Number(snap.formatjiang.port) || 0;
+            const hint = state.gateway.listening === false
+              ? `（格式匠现在没在运行${port ? `，端口 ${port} 没监听` : ''}：先调用 formatjiang_open）`
+              : '';
+            return reject(new Error(`${message}${hint}`));
+          }
           try {
             const value = JSON.parse(String(stdout).trim());
             if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
@@ -1657,6 +1744,11 @@ export function apply(ctx, rawConfig = {}) {
    */
   function describe(status, presetBridge = null) {
     if (!status) {
+      if (config.mountScope === 'off') {
+        // off 是「用户自己在别处配」：这里没有「由预设提供」这回事，别把两种配置混成一句话。
+        // detail 留空：状态行与命令会单独写 MOUNT_SCOPE_HINT.off，避免同一句在括号里再套一层。
+        return { tone: 'idle', label: '桥接已关闭', detail: '' };
+      }
       if (config.mountScope !== 'host') {
         if (presetBridge) return describePresetBridge(presetBridge);
         // 预设模式没有「已连接」这个本地事实：宿主这一份永远是 unmounted。
@@ -1731,8 +1823,19 @@ export function apply(ctx, rawConfig = {}) {
   }
 
   function snapshot() {
-    // 桥接不归宿主这一份时，先把「程序在哪、安装 ID 是什么」交给预设那一份。
+    // 桥接不归宿主这一份时，先把「程序在哪、安装 ID 是什么」交给预设那一份（顺带解析目标）。
     if (config.mountScope !== 'host') handoffTarget();
+    // host 模式下 mount() 是唯一解析目标的地方：mcpManager 一直没就绪时它没跑过，
+    // 宿主工具不该因为「没解析过」而报「没找到程序」——它们本来就不经过桥接。
+    // 这里补一次解析；失败会把原因写进 target.error，不会每次快照都重开数据库。
+    // 放在 handoffTarget 之后：preset 模式下它已经解析过，不能同一次快照读两遍数据库。
+    if (!state.target.executable && !state.target.error && !state.target.installationId) {
+      try {
+        resolveTarget();
+      } catch {
+        /* 解析失败就照实显示未找到，下一次 mount/connect 再试 */
+      }
+    }
     const target = state.target;
     const settings = readMcpSettings(target.dataDir);
     const view = serverView();
@@ -1787,8 +1890,22 @@ export function apply(ctx, rawConfig = {}) {
     if (state.mcpClientCheck && state.mcpClientCheck.ok === false) {
       hints.push(`预设那一份要用的 mcp 客户端加载不了：${state.mcpClientCheck.error}`);
     }
+    // 两条通道分开报：ok 只说「桥接连上了没有」，hostChannel 说「宿主通道能不能起来」。
+    // usable 表示「这套接入没有配置层面的故障」，给命令与状态工具的成败判断用：宿主自己
+    // 挂的时候 ok 就是唯一判据；preset 模式下桥接归预设里的官方 mcp 客户端、宿主看不到
+    // 它的状态，没有旧的交接记录时，只要宿主通道可用就说明机器已经接好了——不能把 ok
+    // 永远钉在 false 上，否则插件页、/formatjiang 命令与状态工具会把一套配置正确、正在
+    // 工作的环境画成待修。应用在不在运行由「运行状态」那一行单独说，免得这里多一个
+    // 异步端口探测的结果，让同一份配置在两次调用里给出不同结论。
+    const host = hostChannel();
+    const bridgeOk = status?.state === 'connected' || presetBridge?.state === 'connected';
+    const usable = Boolean(
+      bridgeOk || (config.mountScope !== 'host' && !presetBridge && host.ok),
+    );
     return {
-      ok: status?.state === 'connected' || presetBridge?.state === 'connected',
+      ok: bridgeOk,
+      usable,
+      hostChannel: host,
       paused: state.paused,
       /** 桥接归谁挂：host = 本插件在宿主层挂；preset = 交给「格式匠」预设。 */
       mountScope: config.mountScope,
@@ -1880,6 +1997,8 @@ export function apply(ctx, rawConfig = {}) {
         ? `桥接：${snap.bridge.transport} / ${snap.server.state} / 工具 ${snap.server.toolCount} 个`
         : `宿主这一份不挂桥接（${snap.server.state}）：业务工具由「格式匠」预设提供，连上后才会出现在工具表里`,
       `挂载位置：${snap.mountScope === 'host' ? '宿主（每个会话都可见）' : '「格式匠」预设（只有选它的会话可见）'}`,
+      // 两条通道分开写：宿主工具不经过桥接，「桥接没连上」不能用来描述它。
+      hostChannelText(snap),
       ...(snap.presetBridge
         ? [`预设桥接：${snap.presetBridge.state} · 工具 ${snap.presetBridge.toolCount} 个（${describeAge(snap.presetBridge.at)}）${snap.presetBridge.lastError ? ` · ${snap.presetBridge.lastError}` : ''}`]
         : []),
@@ -1906,7 +2025,7 @@ export function apply(ctx, rawConfig = {}) {
     if (snap.mountScope !== 'host') {
       lines.push(snap.formatjiang.listening === false
         ? '下一步：格式匠没在运行，先调用 formatjiang_open 启动它（会等到端口就绪）'
-        : '下一步：格式匠已在运行；桥接连上后业务工具才注册进工具表，本回合还没有就再等一个回合，不要据此断定会话没选预设');
+        : '下一步：业务工具由「格式匠」预设里的 mcp 客户端加载；应用已在运行而工具表里没有它们时，先确认本会话选的是「格式匠」预设。宿主工具（附件、会话）不受影响，可以直接用');
     }
     if (snap.mcpClient) {
       lines.push(`预设桥接模块：${snap.mcpClient.ok ? '可用' : `加载失败（${snap.mcpClient.error}）`}`);
@@ -1915,6 +2034,89 @@ export function apply(ctx, rawConfig = {}) {
     for (const hint of snap.hints) lines.push(`待处理：${hint}`);
     lines.push(`采集时间：${snap.updatedAt}`);
     return lines.join('\n');
+  }
+
+  /**
+   * preset 模式下「重连」的说明。
+   *
+   * 这种配置里桥接归预设里的官方 mcp 客户端，宿主这一份没有可重建的连接。以前这里
+   * 直接返回「重连失败：桥接由预设提供…」，模型会把它当成待修的故障反复重试，最后
+   * 向用户宣布「会话没选预设」。现在把两条通道的事实与下一步一次说清：这不是故障。
+   */
+  function presetScopeNote() {
+    // 预设模式下没有可断开的连接：`paused` 是「桥接被用户手动断开」的标记，
+    // 它只对桥接说话，不能顺手把宿主通道一起停掉。显式「连接」动作到这里就结束。
+    state.paused = false;
+    const snap = snapshot();
+    const host = snap.hostChannel;
+    const lines = [
+      '不用重连：桥接由「格式匠」预设里的官方 mcp 客户端负责，宿主这一份不挂桥接，也没有可重建的连接。',
+      // 宿主通道「配置齐了」与「现在能用」要分开说：应用没在跑时不能写成「现在就能用」。
+      !host.ok
+        ? `宿主通道：不可用（${host.reason}）。`
+        : snap.formatjiang.listening === false
+          ? '宿主通道：配置齐全，但格式匠没在运行，起来后就能用。'
+          : '宿主通道：可用——附件收件与会话绑定现在就能用，不依赖业务工具是否加载。',
+    ];
+    if (snap.formatjiang.listening === false) {
+      lines.push('格式匠现在没在运行：先调用 formatjiang_open，起来后业务工具会按预设里的重连设置自己回来。');
+    } else {
+      lines.push('业务工具没出现在工具表里时，先确认本会话选的是「格式匠」预设；应用没开就先 formatjiang_open。改过插件配置后要重启 DSH 才生效。');
+    }
+    // 「不用重连」不等于整条接入可用：应用没在跑时这条调用不能报成功，
+    // 否则模型会以为已经可以干活，跳过 formatjiang_open。
+    const ready = host.ok && snap.formatjiang.listening !== false;
+    return { ...snap, ok: ready, text: lines.join('\n') };
+  }
+
+  /**
+   * mountScope: off 时「连接」的说明。
+   *
+   * 这种配置是用户在插件里主动选的：桥接两边都不挂，宿主这一份既没有可连的桥接，
+   * 也没有可重建的连接。别把它说成「桥接由预设提供」（那是 preset 模式的事实）。
+   */
+  function offScopeNote() {
+    const snap = snapshot();
+    const host = snap.hostChannel;
+    const lines = [
+      '桥接在插件配置里关着（mountScope: off）：这里没有可连接的桥接，格式匠工具需要在别处自己配 mcp 客户端。',
+      !host.ok
+        ? `宿主通道：不可用（${host.reason}）。`
+        : snap.formatjiang.listening === false
+          ? '宿主通道：配置齐全，但格式匠没在运行，起来后就能用。'
+          : '宿主通道：可用——附件收件与会话绑定不经过桥接，随时能用。',
+      '要改回由宿主或「格式匠」预设挂桥接，改插件配置的 mountScope 后重启 DSH。',
+    ];
+    // 这条动作本来就没有可执行的对象，不能报成功，否则模型会以为桥接已经重建。
+    return { ...snap, ok: false, text: lines.join('\n') };
+  }
+
+  /** 「连接」在非 host 模式下的说明：preset 与 off 是两种不同的配置，不能共用一句话。 */
+  function connectScopeNote() {
+    return config.mountScope === 'off' ? offScopeNote() : presetScopeNote();
+  }
+
+  /** 「断开」在非 host 模式下的说明：这里没有可断开的桥接，原因随配置不同。 */
+  function disconnectScopeText() {
+    return config.mountScope === 'off'
+      ? '插件配置里关掉了桥接（mountScope: off），没有可断开的连接。'
+      : '桥接挂在「格式匠」预设上，宿主这里没有可断开的连接；要停就在那个会话里不再使用格式匠工具。';
+  }
+
+  /**
+   * 宿主通道那一行话。
+   *
+   * 「配置齐了」与「现在能用」是两件事：前者看程序与安装 ID，后者还要格式匠在运行。
+   * 两条都说明白，模型才不会把「应用没开」当成「会话没选预设」。
+   */
+  function hostChannelText(snap) {
+    if (!snap.hostChannel?.ok) return `宿主通道：不可用（${snap.hostChannel?.reason || '原因未知'}）`;
+    if (snap.formatjiang.listening === false) {
+      return '宿主通道：暂时不可用——格式匠没在运行，先调用 formatjiang_open';
+    }
+    return snap.formatjiang.listening === true
+      ? '宿主通道：可用（附件收件、会话绑定走这条，不依赖业务工具）'
+      : '宿主通道：可用（附件收件、会话绑定走这条；本机端口状态还没探到）';
   }
 
   /* ---------------------------- 工具 ---------------------------- */
@@ -1937,26 +2139,40 @@ export function apply(ctx, rawConfig = {}) {
     disposers.push(register(defineTool({
       name: 'formatjiang_status',
       description:
-        '查看本机格式匠的接入状态：桥接通没通、工具数量、最近错误、程序与安装 ID 是否找到。'
+        '查看本机格式匠的接入状态：桥接与宿主通道各自通没通、工具数量、最近错误、程序与安装 ID 是否找到。'
         + '用户问「格式匠连上了吗」「为什么格式匠的工具用不了」时先调它，不要盲目重试业务工具。',
       parameters: {},
       output: { schema: { type: 'json' }, render: (args, value) => okText(value?.text || '已读取格式匠状态') },
-      async execute() {
+      async execute(_args, exec) {
         const snap = snapshot();
-        const lines = [`格式匠：${snap.label}${snap.detail ? `（${snap.detail}）` : ''}`];
+        // 预设模式下没有交接记录时，detail 就是下面那行「桥接：…」的同一句话；别复述两遍。
+        const headDetail = snap.mountScope !== 'host' && !snap.presetBridge ? '' : snap.detail;
+        const lines = [`格式匠：${snap.label}${headDetail ? `（${headDetail}）` : ''}`];
         if (snap.mountScope && snap.mountScope !== 'host') {
           const bridge = snap.presetBridge;
           lines.push(bridge
             ? `预设桥接：${bridge.state}${bridge.toolCount ? ` · ${bridge.toolCount} 个工具` : ''}（${describeAge(bridge.at)}）${bridge.lastError ? ` · ${bridge.lastError}` : ''}`
             : `桥接：${MOUNT_SCOPE_HINT[snap.mountScope] || MOUNT_SCOPE_HINT.preset}`);
-          // 预设模式下宿主这一份永远是 unmounted，那不是「会话没选预设」的证据：
-          // 应用没开、或桥接还在重连时同样长这样。这里把两种真实情况分开说。
+          // 宿主这一份看不到预设里那份官方客户端的连接状态，但「应用在不在跑」是事实：
+          // 把它单独说清，不要再让模型从「unmounted」推出「会话没选预设」。
           const port = snap.formatjiang.port || '未知';
           if (snap.formatjiang.listening === false) {
-            lines.push(`运行状态：格式匠没在运行（端口 ${port} 没监听）——先调用 formatjiang_open 启动它，起来后桥接会自动重连`);
+            lines.push(`运行状态：格式匠没在运行（端口 ${port} 没监听）——先调用 formatjiang_open；起来后业务工具会按预设里的重连设置自己回来`);
           } else if (snap.formatjiang.listening === true) {
-            lines.push('运行状态：格式匠已在运行。桥接连上后业务工具才会注册进工具表；这一步还没看到 mcp__formatjiang__* 就再等一个回合，不要据此断定会话没选预设');
+            lines.push(`运行状态：格式匠已在运行（端口 ${port} 在听）`);
           }
+        }
+        // 两条通道分开报：桥接归桥接，宿主工具归宿主通道，谁断了就说谁。
+        lines.push(hostChannelText(snap));
+        const registered = snap.presetBridge?.toolCount || snap.server.toolCount || 0;
+        const cwd = exec?.agent?.session?.cwd || exec?.agent?.session?.workingDirectory || exec?.cwd || '';
+        const cursor = cwd ? researchCursor(cwd) : null;
+        if (cursor?.stageId && cursor.stageId !== 'publish') {
+          lines.push(`已注册 ${registered} 个业务工具。研究任务卡还在「${cursor.stageId}」，本阶段不要调用它们。`);
+        } else if (cursor?.stageId === 'publish') {
+          lines.push(`已注册 ${registered} 个业务工具。本阶段可见交接与套版：formatjiang_receive_manuscript、preview_layout_plan、apply_layout_as_branch。`);
+        } else {
+          lines.push(`已注册 ${registered} 个业务工具。编号以工具文本为准；应用没运行时先 formatjiang_open。`);
         }
         if (snap.server.toolCount) lines.push(`工具：${snap.server.toolCount} 个，前缀 mcp__${SERVER_NAME}__`);
         if (snap.formatjiang.executable) lines.push(`程序：${snap.formatjiang.executable}`);
@@ -1967,7 +2183,9 @@ export function apply(ctx, rawConfig = {}) {
         // 装配失败与插件页接口单独列出：它们不是「连接问题」，而是插件自己没装好。
         for (const fault of snap.faults || []) lines.push(`装配失败：${fault.label} — ${fault.message}`);
         if (snap.panel?.ok === false) lines.push(`插件页接口：未挂载（${snap.panel.error}）`);
-        return { ok: snap.ok, text: lines.join('\n'), ...snap };
+        // ok 在这里表示「这套接入现在算不算正常」：宿主自己挂时看桥接；preset 模式下
+        // 桥接不在宿主这一份，宿主通道可用就说明机器已经接好了（见 snapshot().usable）。
+        return { ...snap, ok: snap.usable, text: lines.join('\n') };
       },
     })));
 
@@ -1975,12 +2193,16 @@ export function apply(ctx, rawConfig = {}) {
       name: 'formatjiang_connect',
       description:
         '重新发现并重连本机格式匠：填好程序路径或安装 ID 以后、或桥接放弃重试以后用它。'
-        + '它只重建连接，不改变论文、版本或版式配置。',
+        + '它只重建连接，不改变论文、版本或版式配置；mountScope 是 preset 时桥接不归宿主，它只说明为什么不用重连。',
       parameters: {
         restart: { type: 'boolean', description: '已经有连接时是否强制重建一次（默认 true；传 false 复用现有连接）' },
       },
       output: { schema: { type: 'json' }, render: (args, value) => okText(value?.text || '已重新连接格式匠') },
       async execute(args) {
+        // 预设模式下这条没有可重建的连接：桥接归预设里的官方 mcp 客户端。以前这里
+        // 返回「重连失败：桥接由预设提供…」，模型把它当成待修故障反复重试；现在直接
+        // 说明分工与下一步，宿主通道可用时 ok 为真。
+        if (config.mountScope !== 'host') return connectScopeNote();
         // 这个工具就是「重新连接」：默认重建（桥接可能已经放弃重试），
         // 只有显式传 restart:false 才复用现有连接。
         resetAutoReconnect();
@@ -2004,7 +2226,7 @@ export function apply(ctx, rawConfig = {}) {
         if (config.mountScope !== 'host') {
           return {
             ok: false,
-            text: '桥接挂在「格式匠」预设上，宿主这里没有可断开的连接；要停就在那个会话里不再使用格式匠工具。',
+            text: disconnectScopeText(),
             ...snapshot(),
           };
         }
@@ -2048,11 +2270,13 @@ export function apply(ctx, rawConfig = {}) {
         // 把刚测到的事实写进状态，紧接着的 formatjiang_status 就不会再报旧值。
         state.gateway.listening = ready;
         state.gateway.at = Date.now();
-        const preset = config.mountScope !== 'host';
         if (ready) {
-          const follow = preset
-            ? '预设里的桥接会自动接上（最多十几秒），连上之后 mcp__formatjiang__* 业务工具才会注册进工具表——可能要等下一个回合。本回合还看不到就再调一次 formatjiang_status，不要据此断定会话没选预设。'
-            : '接着调用 formatjiang_connect 建连（开着自动重连时它也会自己连上）。';
+          const follow = config.mountScope === 'preset'
+            ? '宿主工具（附件收件、会话绑定）现在就能用；预设里的桥接会自动接上（最多十几秒），连上之后 mcp__formatjiang__* 业务工具才会注册进工具表——可能要等下一个回合。本回合还看不到就再调一次 formatjiang_status，不要据此断定会话没选预设。'
+            : config.mountScope === 'off'
+              // 配置里关掉了桥接：打开应用不会让业务工具自己出现，别让模型以为再等一会就有。
+              ? '宿主工具（附件收件、会话绑定）现在就能用；桥接在插件配置里关着（mountScope: off），业务工具不会自己出现，需要在别处配 mcp 客户端。'
+              : '接着调用 formatjiang_connect 建连（开着自动重连时它也会自己连上）。';
           return {
             ok: true,
             text: `已启动格式匠，端口 ${port} 已经在听（${executable.path}）。窗口只在任务栏、没有抢焦点，用户不必切过去看它也能用工具。${follow}`,
@@ -2093,7 +2317,7 @@ export function apply(ctx, rawConfig = {}) {
       async execute() {
         const snap = snapshot();
         const text = diagnosticsText(snap);
-        return { ok: snap.ok, text, ...snap };
+        return { ...snap, ok: snap.usable, text };
       },
     })));
 
@@ -2150,7 +2374,14 @@ export function apply(ctx, rawConfig = {}) {
           return { ok: false, text: '文件名无效，请只填写文件名，不要包含路径' };
         }
         const snap = snapshot();
-        if (!snap.ok) return { ok: false, text: `格式匠还没连上：${snap.detail || '先按插件页接入'}`, ...snap };
+        // 附件走宿主身份通道；预设业务桥接的观测状态不能拦住这条独立通道。
+        const channel = hostChannel();
+        if (!channel.ok) return { ok: false, text: `格式匠宿主通道不可用：${channel.reason}`, ...snap };
+        // 收件区在格式匠的数据目录下：没有目录就不能拼相对路径，否则会在当前工作目录里
+        // 造出一棵 mcp-files/inbox，而且那份文件格式匠永远看不到。
+        if (!snap.formatjiang.dataDir) {
+          return { ok: false, text: '找不到格式匠数据目录，文件放不进收件区；可在插件配置里填写 dataDir', ...snap };
+        }
         let info;
         try {
           info = await fs.promises.stat(sourcePath);
@@ -2179,7 +2410,8 @@ export function apply(ctx, rawConfig = {}) {
         const stagedPath = path.join(stagingDir, fileName);
         try {
           const result = await callHost(exec, 'receive_file', { source_path: stagedPath, file_name: fileName, paper_id: args?.paper_id });
-          return { ok: true, text: '已接收附件，可用 formatjiang_import_document 导入。', ...result };
+          const fileId = nestedId(result, ['file_id', 'fileId']);
+          return { ok: true, ...result, file_id: fileId, text: `已接收附件。file_id=${fileId || '（宿主没有返回 file_id）'}` };
         } catch (error) {
           return { ok: false, text: `附件接收失败：${error.message}` };
         } finally {
@@ -2208,8 +2440,92 @@ export function apply(ctx, rawConfig = {}) {
       parameters: { file_id: { type: 'string', required: true }, request_id: { type: 'string', required: true }, as_new_paper: { type: 'boolean' }, paper_id: { type: 'number' }, paper_name: { type: 'string' }, doc_type: { type: 'string' }, parent_version_id: { type: 'number' }, set_current: { type: 'boolean' }, remark: { type: 'string' } },
       output: { schema: { type: 'json' }, render: (args, value) => okText(value?.text || '稿件导入完成') },
       async execute(args, exec) {
-        try { return { ok: true, ...await callHost(exec, 'import_document', args) }; }
+        try {
+          const result = await callHost(exec, 'import_document', args);
+          const paperId = nestedId(result, ['paper_id', 'paperId']);
+          const versionId = nestedId(result, ['version_id', 'versionId']);
+          return { ok: true, ...result, paper_id: paperId, version_id: versionId, text: `已导入。paper_id=${paperId || '（没有返回）'} version_id=${versionId || '（没有返回）'}` };
+        }
         catch (error) { return { ok: false, text: error.message }; }
+      },
+    })));
+    disposers.push(register(defineTool({
+      name: 'formatjiang_receive_manuscript',
+      description: '把工作台文稿送进格式匠：复制进收件区、导入为新论文并绑定。一次返回 file_id、paper_id、version_id，并写明覆盖了哪一次旧绑定。',
+      parameters: { path: { type: 'string', required: true, description: '文稿的绝对路径，应是项目里的 output/manuscript.docx' } },
+      output: { schema: { type: 'json' }, render: (args, value) => okText(value?.text || '文稿交接结果') },
+      async execute(args, exec) {
+        if (!exec?.agent?.session?.header?.id) return { ok: false, text: '宿主没有提供真实聊天标识，请从对话内调用' };
+        const sourcePath = String(args?.path || '').trim();
+        if (!path.isAbsolute(sourcePath)) return { ok: false, text: '需要文稿的绝对路径' };
+        const channel = hostChannel();
+        if (!channel.ok) return { ok: false, text: `格式匠宿主通道不可用：${channel.reason}` };
+        const snap = snapshot();
+        if (!snap.formatjiang.dataDir) return { ok: false, text: '找不到格式匠数据目录，文件放不进收件区' };
+        let info;
+        try { info = await fs.promises.stat(sourcePath); } catch { return { ok: false, text: `找不到这个文件：${sourcePath}` }; }
+        if (!info.isFile()) return { ok: false, text: '只能交接普通文件' };
+        if (info.size > MAX_ATTACHMENT_BYTES) return { ok: false, text: `文件超过 ${MAX_ATTACHMENT_BYTES >> 20} MB，格式匠的收件区接不住` };
+        let previous = null;
+        try { previous = await callHost(exec, 'get_session_binding', {}); } catch { previous = null; }
+        const previousId = nestedId(previous, ['paper_id', 'paperId']);
+        const fileName = path.basename(sourcePath);
+        const inboxRoot = path.resolve(snap.formatjiang.dataDir, 'mcp-files', 'inbox');
+        const stagingDir = path.join(inboxRoot, `stg-${randomUUID()}`);
+        try {
+          await fs.promises.mkdir(stagingDir, { recursive: true });
+          await fs.promises.copyFile(sourcePath, path.join(stagingDir, fileName), fs.constants.COPYFILE_EXCL);
+          const received = await callHost(exec, 'receive_file', { source_path: path.join(stagingDir, fileName), file_name: fileName });
+          const fileId = nestedId(received, ['file_id', 'fileId']);
+          if (!fileId) return { ok: false, text: '收件成功但宿主没有返回 file_id', received };
+          const requestId = `research-${createHash('sha256').update(await fs.promises.readFile(sourcePath)).digest('hex').slice(0, 24)}`;
+          const imported = await callHost(exec, 'import_document', { file_id: fileId, request_id: requestId, as_new_paper: true, set_current: true, doc_type: 'thesis', paper_name: path.basename(fileName, path.extname(fileName)) });
+          const paperId = nestedId(imported, ['paper_id', 'paperId']);
+          const versionId = nestedId(imported, ['version_id', 'versionId']);
+          if (!paperId || !versionId) return { ok: false, text: `已收件 file_id=${fileId}，但导入没有同时返回 paper_id 和 version_id`, file_id: fileId, imported };
+          let bound = null;
+          try { bound = await callHost(exec, 'bind_session', { paper_id: Number(paperId), version_id: Number(versionId) }); }
+          catch (error) { return { ok: false, text: `编号已取得，但绑定失败：${error.message}。file_id=${fileId} paper_id=${paperId} version_id=${versionId}`, file_id: fileId, paper_id: paperId, version_id: versionId }; }
+          const replaced = previousId ? `覆盖了原先绑定的论文 ${previousId}。` : '之前没有绑定其他论文。';
+          let recorded = '';
+          try {
+            let dir = path.dirname(sourcePath);
+            for (let depth = 0; depth < 6; depth += 1) {
+              if (fs.existsSync(path.join(dir, '.workbench'))) {
+                const relative = path.relative(dir, sourcePath).replace(/\\/g, '/');
+                if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+                  const sha256 = createHash('sha256').update(await fs.promises.readFile(sourcePath)).digest('hex');
+                  const handoff = {
+                    schema: 'dsa.handoff/1',
+                    file_id: String(fileId),
+                    paper_id: paperId,
+                    version_id: versionId,
+                    manuscript: relative,
+                    manuscriptSha256: sha256,
+                    previousBinding: previousId || null,
+                    at: new Date().toISOString(),
+                  };
+                  const target = path.join(dir, 'output', 'handoff.json');
+                  await fs.promises.mkdir(path.dirname(target), { recursive: true });
+                  await fs.promises.writeFile(target, `${JSON.stringify(handoff, null, 2)}\n`);
+                  recorded = '交付编号已写入 output/handoff.json。';
+                }
+                break;
+              }
+              const parent = path.dirname(dir);
+              if (parent === dir) break;
+              dir = parent;
+            }
+          } catch { recorded = ''; }
+          const follow = recorded || '请再调用 data_analysis_record_handoff 记下这三个编号。';
+          return { ok: true, file_id: fileId, paper_id: paperId, version_id: versionId, previous_paper_id: previousId || '', bound, text: `交接完成。file_id=${fileId} paper_id=${paperId} version_id=${versionId}。${replaced}${follow}下一步只预览套版，预览后停止本回合，不要调用 apply_layout_as_branch。` };
+        } catch (error) {
+          return { ok: false, text: `文稿交接失败：${error.message}` };
+        } finally {
+          if (path.dirname(stagingDir) === inboxRoot && path.basename(stagingDir).startsWith('stg-')) {
+            try { await fs.promises.rm(stagingDir, { recursive: true, force: true }); } catch { /* 临时目录清不掉不影响已登记的附件 */ }
+          }
+        }
       },
     })));
     disposers.push(register(defineTool({
@@ -2251,23 +2567,20 @@ export function apply(ctx, rawConfig = {}) {
       '## 格式匠（本机论文工具）',
       '',
       '用户装了「格式匠论文助手」。它把本机格式匠的论文项目、版式配置、提交检查与知识库接成本机 MCP 工具，工具名前缀是 `mcp__formatjiang__`。',
-      '- 连接状态不明、或业务工具报连接错误时，先调用 `formatjiang_status`；格式匠没运行就调用 `formatjiang_open`（它会启动应用并等到端口就绪，起来后桥接自动重连）；只有 mountScope 是 host 且确实要重建连接时才用 `formatjiang_connect`。不要在断线状态下反复重试业务工具。',
-      '- 只用这些工具处理用户已经导入格式匠的论文、受管版本、版式配置、诊断与本地资料；不要把它当通用文件系统或互联网搜索。',
-      '- 业务 ID 一律先用 `list_*` 发现，不要猜。',
-      '- 写操作只有格式匠开启安全写后才出现，且都要先讲清影响再执行：套版的 `apply_layout_as_branch` 必须先 `preview_layout_plan` 并由用户在对话里明确同意；其余写操作（导入新稿、确认结构、生成批注稿或修订稿、切换当前版本、导入共坊版式、建库与导入资料、整理投稿包、续跑资料导入）同样只能对用户点名过的对象执行。',
-      '- 提交检查：先用 `list_diagnostic_profiles` 选 profile，长稿用 `start_diagnostic_run` 异步启动，然后用 `get_diagnostic_status({ run_id, wait_seconds: 120 })` 一直等到 status 不是 running（还在跑就再调一次），再用 `list_findings` 分页读问题；报告里的数字必须能在工具结果里找到出处。检查结果要在对话里给出来，不要让用户切到格式匠自己去看。',
-      '- 创建类操作需要稳定的 request_id，同次操作的重试沿用原编号，不得换编号绕过结果未知状态；但重新预览拿到新 confirmation_token 之后就算新请求，要换成新编号。附件到知识库或投稿包用 formatjiang_use_attachments；大文件必须调用 formatjiang_save_file 保存。\n- 新稿从对话走到成品：`formatjiang_stage_attachment` 把用户给的文件放进格式匠收件区 → 自动接收 → `formatjiang_import_document` 建论文或追加版本 → `create_structure_plan` / `confirm_structure_plan` 确认结构 → 预览并套版 → 检查 → 导出 → `formatjiang_save_file` 保存成品。`receive_file` 只接受收件区里的路径，不要直接把别的本机路径塞进去。中途断线用 `list_interrupted_tasks` 盘点、`formatjiang_session` 找回当前论文。',
-      '- 后台任务都要守到出结果：提交检查、引文核对、资料解析、版式生成的状态工具都支持 `wait_seconds`（最多 180 秒），一次调用替你等一段时间——返回的 status 还在跑就再调一次，直到出结论；不要让用户切到格式匠自己去看。',
-      '- 引文页码核对走 `preview_citation_check` → `start_citation_check` → `get_citation_check_run({ run_id, wait_seconds: 120 })` 等到结束 → `list_citation_check_items` → `get_citation_check_item`；页面对不上就如实给出候选页码与摘录，不要用「看起来像」判断。',
-      '- 投稿前用 `inspect_blind_review` 看匿名残留，用 `build_submission_package` 整理交付；返回里的 `missing` 与 `unresolved_requirements` 必须原样转述，它们不是「材料已齐全」的证明。',
-      `- 要做套版、提交检查或资料取证这类完整流程时，先用 \`skill\` 工具加载 \`${SKILL_NAME}\`，按里面的步骤走。`,
+      '- **两条通道，别互相等**：业务工具 `mcp__formatjiang__*` 由连接提供（preset 模式下来自「格式匠」预设里的官方 mcp 客户端）；宿主工具（`formatjiang_status/open/session/stage_attachment/import_document/use_attachments/save_file`）走独立的本机通道，只要程序与安装 ID 在、格式匠在运行就能用，不需要业务工具先出现在工具表里。附件收件、会话绑定、成品取回都走宿主通道。',
+      '- 连接状态不明、或业务工具报连接错误时，先调用 `formatjiang_status`（它分别报桥接与宿主通道）；格式匠没运行就调用 `formatjiang_open`。`formatjiang_connect` 只在 mountScope 是 host 且确实要重建连接时用，preset 模式下它会明确告诉你「不用重连」。不要在断线状态下反复重试业务工具。',
+      '- 用户要求「在格式匠里建论文 / 套版」而这条链路走不通时：停下来把阻塞点与下一步（`formatjiang_open`、确认会话选了「格式匠」预设、或在格式匠界面里手动导入）说清楚并问用户；不要用 python-docx 等脚本模仿版式冒充格式匠的产物，也不要把宿主工具报的错误说成「本会话没选预设」。',
+      '- 研究任务卡还没到交付阶段时，不要调用 mcp__formatjiang__*。交付阶段只做三件事：formatjiang_receive_manuscript 取回 file_id、paper_id、version_id；preview_layout_plan 预览；用户在当前对话明确同意后才 apply_layout_as_branch。预览之后停止本回合。',
+      '- 应用没在运行时先 formatjiang_open。formatjiang_status 会写已注册的业务工具数量，以及本阶段该用哪些。',
+      '- file_id、paper_id、version_id 以工具文本里的编号为准，不要从目录名反推。',
+      '- 要做套版、提交检查或资料取证这类完整流程，并且任务卡已经进入交付或用户本来就在处理格式匠里的论文时，再用 `skill` 工具加载 `' + SKILL_NAME + '`。',
       '- 插件会在对话里渲染套版方案卡与提交检查卡；卡片已经展示出来的内容不要在回答里重复复述。',
     ];
     // 桥接在预设上时，这个会话很可能根本看不到业务工具：先把这句话摆前面，
     // 否则模型会照常去找 mcp__formatjiang__*，然后一遍遍报「工具不存在」。
     if (config.mountScope !== 'host') {
       lines.splice(3, 0,
-        '- **格式匠的业务工具只在「格式匠」预设的会话里加载**：当前会话的工具表里没有 `mcp__formatjiang__*` 时，先调用 `formatjiang_open` 确认格式匠在运行；应用没开时桥接连不上，把这些工具打开后才会出现（最多十几秒，可能要等下一个回合）。工具出现后直接用，不要因为之前那一步没有就断言「会话没选预设」；应用已经开着、等过一回合仍然没有，才去怀疑预设。下面这些流程描述适用于那种会话。',
+        '- **格式匠的业务工具只在「格式匠」预设的会话里加载**：本会话工具表里没有 `mcp__formatjiang__*` 时，先 `formatjiang_open` 确认应用在运行；应用开着、等过一个回合仍然没有，才是本会话没选这个预设。宿主工具（附件、会话身份）不依赖它们，照常可用。下面这些流程描述适用于那种会话。',
       );
     }
     // 字段名必须是 text：宿主按 PromptSection 契约读取 section.text，
@@ -2321,9 +2634,14 @@ export function apply(ctx, rawConfig = {}) {
         const keyword = raw.toLowerCase();
         if (keyword === '诊断' || keyword === 'doctor' || keyword === 'diag') {
           const snap = snapshot();
-          return { kind: snap.ok ? 'success' : 'error', text: diagnosticsText(snap) };
+          return { kind: snap.usable ? 'success' : 'error', text: diagnosticsText(snap) };
         }
         if (keyword === '重连' || keyword === 'connect' || keyword === 'reconnect') {
+          // 预设模式下这条命令没有可重建的连接：照实说明，别让一句「重连失败」把人带偏。
+          if (config.mountScope !== 'host') {
+            const note = connectScopeNote();
+            return { kind: note.ok ? 'success' : 'error', text: note.text };
+          }
           resetAutoReconnect();
           const result = mount({ restart: true });
           const snap = snapshot();
@@ -2332,7 +2650,7 @@ export function apply(ctx, rawConfig = {}) {
         }
         if (keyword === '断开' || keyword === '断连' || keyword === 'disconnect') {
           if (config.mountScope !== 'host') {
-            return { kind: 'error', text: '桥接挂在「格式匠」预设上，宿主这里没有可断开的连接；要停就在那个会话里不再使用格式匠工具。' };
+            return { kind: 'error', text: disconnectScopeText() };
           }
           resetAutoReconnect();
           disconnect();
@@ -2340,14 +2658,17 @@ export function apply(ctx, rawConfig = {}) {
         }
         const snap = snapshot();
         const lines = [`格式匠：${snap.label}`];
-        if (snap.detail) lines.push(snap.detail);
+        // 预设模式下没有交接记录时，detail 就是下面那行分工说明；同一句不要打两遍。
+        if (snap.detail && (snap.mountScope === 'host' || snap.presetBridge)) lines.push(snap.detail);
         if (snap.mountScope !== 'host' && !snap.presetBridge) {
           lines.push(MOUNT_SCOPE_HINT[snap.mountScope] || MOUNT_SCOPE_HINT.preset);
         }
+        // 宿主工具与桥接是两条路：把这条单独报出来，免得「未挂载」被读成整个插件坏了。
+        lines.push(hostChannelText(snap));
         if (snap.server.toolCount) lines.push(`工具 ${snap.server.toolCount} 个`);
         for (const hint of snap.hints) lines.push(`待处理：${hint}`);
         lines.push('输入 `/formatjiang 诊断` 可生成可复制的接入信息。');
-        return { kind: snap.ok ? 'success' : 'error', text: lines.join('\n') };
+        return { kind: snap.usable ? 'success' : 'error', text: lines.join('\n') };
       },
     });
   }, 'formatjiang: command');
@@ -2463,11 +2784,26 @@ export function apply(ctx, rawConfig = {}) {
             });
           }
           if (action === '/disconnect') {
+            // 预设模式没有可断开的连接：别把 paused 置上，否则插件页会显示一个
+            // 按不回来的「已断开」，宿主通道也会被一起挡住。
+            if (config.mountScope !== 'host') {
+              return json(res, 200, { ok: true, note: disconnectScopeText(), state: snapshot() });
+            }
             resetAutoReconnect();
             disconnect();
             return json(res, 200, { ok: true, state: snapshot() });
           }
           if (action === '/connect') {
+            // 预设模式下这条没有可重建的连接：回说明，而不是一句「重连失败」。
+            if (config.mountScope !== 'host') {
+              const note = connectScopeNote();
+              return json(res, note.ok ? 200 : 400, {
+                ok: note.ok,
+                error: note.ok ? '' : note.text,
+                note: note.text,
+                state: snapshot(),
+              });
+            }
             resetAutoReconnect();
             const result = mount({ restart: body?.restart !== false });
             if (result.busy) return json(res, 429, { ok: false, error: result.error, state: snapshot() });

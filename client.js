@@ -591,8 +591,10 @@
         var hints = state.hints || [];
         // 预设作用域下「未挂载」是配置结果，不是故障：别把它画成待修的红条。
         var presetScope = state.mountScope === 'preset';
+        // mountScope: off 同理：用户故意不挂桥接，红色「需要修复」会把配置选择说成故障。
+        var offScope = state.mountScope === 'off';
         var presetBridge = state.presetBridge || null;
-        var broken = !presetScope && (state.tone === 'error' || server.state === 'failed' || server.state === 'unmounted');
+        var broken = !presetScope && !offScope && (state.tone === 'error' || server.state === 'failed' || server.state === 'unmounted');
         var waiting = retryHint(server) || autoHint(state);
 
         var capabilities = [
@@ -643,6 +645,8 @@
           children.push(h('div', { key: 'scope', className: 'fj-note' }, presetBridge
             ? presetBridgeText(presetBridge)
             : '桥接由「格式匠」预设提供：新建会话时选这个预设，格式匠的工具才会加载；其他预设的会话不加载它们。'));
+        } else if (offScope) {
+          children.push(h('div', { key: 'scope', className: 'fj-note' }, '桥接在插件配置里关着（mountScope: off）：格式匠工具需要在别处自己配 mcp 客户端；宿主工具（附件、会话）不受影响。'));
         }
 
         if (broken) {
@@ -671,9 +675,9 @@
             disabled: pending === '/open' || !f.executable,
             onClick: function () { run('/open'); },
           }, '打开格式匠'),
-          h('button', {
+          presetScope || offScope ? null : h('button', {
             className: 'fj-btn',
-            disabled: presetScope || pending === '/connect',
+            disabled: pending === '/connect',
             onClick: function () { run('/connect'); },
           }, '重新连接'),
           presetScope ? null : (server.state === 'connected'
@@ -1063,9 +1067,14 @@
         // 桥接交给预设时，「连没连上」这件事不在这个面板里：本会话没选那个预设就看不到工具，
         // 面板只陈述事实，不给「重新连接」这种按了也没用的按钮。
         var presetScope = state.mountScope === 'preset';
+        var offScope = state.mountScope === 'off';
         var presetBridge = state.presetBridge || null;
         var mcpReady = f.mcpEnabled === true;
         var installReady = Boolean(f.installationId);
+        // 随附预设挂的是官方 mcp 客户端，不写插件自己的交接记录：第三步不能因此一直
+        // 停在「未完成」。机器这三步（MCP 开启、安装就绪、宿主通道可用）齐了就算就绪，
+        // 剩下的只是去预设会话里用——`usable` 由宿主算好，面板不重复推导一遍。
+        var presetReady = presetScope && !presetBridge && Boolean(state.usable);
         // 配置说「已开启」与端口真的在听是两件事：后者才是桥接能不能起来的前提。
         // listening 为 null 表示还没探到，这时不要凭空加一句「未监听」吓人。
         var silent = mcpReady && f.listening === false;
@@ -1096,17 +1105,25 @@
           h(Step, {
             key: 'step3',
             index: 3,
-            done: presetScope ? Boolean(presetBridge && presetBridge.state === 'connected') : connected,
+            done: presetScope
+              ? Boolean((presetBridge && presetBridge.state === 'connected') || presetReady)
+              : (offScope ? false : connected),
             title: presetScope
               ? (presetBridge && presetBridge.state === 'connected'
                 ? ('「格式匠」预设里已连接，' + (presetBridge.toolCount || 0) + ' 个工具可用')
-                : '在「格式匠」预设的会话里使用')
-              : (connected ? ('已连接，' + server.toolCount + ' 个工具可用') : '把桥接连上'),
+                : presetReady
+                  ? '本机已就绪，在「格式匠」预设的会话里使用'
+                  : '在「格式匠」预设的会话里使用')
+              : offScope
+                ? '桥接已关闭（插件配置选的）'
+                : (connected ? ('已连接，' + server.toolCount + ' 个工具可用') : '把桥接连上'),
             hint: presetScope
               ? (presetBridge
                 ? presetBridgeText(presetBridge)
-                : '桥接挂在「格式匠」预设上：新建会话时选这个预设，格式匠的工具才会加载；其他预设的会话不加载它们，省下每轮的开销。')
-              : (connected
+                : '桥接挂在「格式匠」预设上：新建会话时选这个预设，格式匠的工具才会加载；其他预设的会话不加载它们，省下每轮的开销。宿主工具（附件、会话）不经过桥接，随时能用。')
+              : offScope
+                ? '插件配置 mountScope: off：格式匠工具需要在别处配 mcp 客户端；宿主工具（附件、会话）不受影响。'
+                : (connected
                 ? '下面几个按钮只在排障时才用。'
                 : state.paused
                   ? '已手动断开；点「重新连接」恢复。'
@@ -1132,7 +1149,9 @@
             ),
             h('div', { className: 'fj-lead' }, presetScope
               ? '这里管格式匠本身：程序、数据目录、本机接入与 MCP 服务。格式匠的工具挂在「格式匠」预设上，新建会话时选那个预设就会加载。'
-              : '把本机格式匠的论文工具接进对话：套版、提交检查、资料与页码取证。下面三步走完就能用。'),
+              : offScope
+                ? '这里管格式匠本身：程序、数据目录、本机接入与 MCP 服务。桥接在插件配置里关着（mountScope: off），格式匠工具需要在别处自己配。'
+                : '把本机格式匠的论文工具接进对话：套版、提交检查、资料与页码取证。下面三步走完就能用。'),
             h('div', { className: 'fj-body' }, h('div', { className: 'fj-group' }, steps)),
             connected || state.catalog
               ? h(CatalogBlock, {
@@ -1147,12 +1166,12 @@
                 disabled: actions.pending === '/open' || !f.executable,
                 onClick: function () { actions.run('/open'); },
               }, '打开格式匠'),
-              presetScope ? null : h('button', {
+              presetScope || offScope ? null : h('button', {
                 className: 'fj-btn',
                 disabled: actions.pending === '/connect',
                 onClick: function () { actions.run('/connect'); },
               }, '重新连接'),
-              presetScope ? null : (connected
+              presetScope || offScope ? null : (connected
                 ? h('button', {
                   className: 'fj-btn fj-btn-text',
                   disabled: actions.pending === '/disconnect',

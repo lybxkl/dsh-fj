@@ -235,7 +235,7 @@ test('挂载参数与工具面符合桥接契约', () => {
 
   assert.deepEqual(
     record.tools.map((tool) => tool.name),
-    ['formatjiang_status', 'formatjiang_connect', 'formatjiang_disconnect', 'formatjiang_open', 'formatjiang_diagnostics', 'formatjiang_catalog', 'formatjiang_stage_attachment', 'formatjiang_session', 'formatjiang_import_document', 'formatjiang_use_attachments', 'formatjiang_save_file'],
+    ['formatjiang_status', 'formatjiang_connect', 'formatjiang_disconnect', 'formatjiang_open', 'formatjiang_diagnostics', 'formatjiang_catalog', 'formatjiang_stage_attachment', 'formatjiang_session', 'formatjiang_import_document', 'formatjiang_receive_manuscript', 'formatjiang_use_attachments', 'formatjiang_save_file'],
   );
   for (const tool of record.tools) {
     assert.equal(typeof tool.execute, 'function');
@@ -922,6 +922,84 @@ test('面板 /disconnect 同样能断开并报告状态', async () => {
   assert.equal(body.json.state.server.state, 'unmounted');
 });
 
+/**
+ * 面板的两个连接动作在 preset 模式下没有对象：以前 /disconnect 会把 paused 置上，
+ * 而预设模式又没有「重新连接」按钮，宿主通道会被这个标记一直挡住；/connect 则回一句
+ * 「重连失败」。这两条都必须在 API 层就分开处理，不能只靠隐藏按钮。
+ */
+test('预设模式下 /disconnect 不停宿主通道，/connect 回「不用重连」', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-http-preset-'));
+  const { ctx, record } = makeCtx();
+  try {
+    plugin.apply(ctx, {
+      executablePath: EXE,
+      installationId: 'ins_http_preset',
+      dataDir: dir,
+      mountScope: 'preset',
+      autoReconnect: false,
+    });
+    const route = record.routes.find((item) => item.path === '/formatjiang/api');
+
+    const off = await call(route, { method: 'POST', url: '/formatjiang/api/disconnect', headers: { host: '127.0.0.1:5173' } });
+    assert.equal(off.status, 200);
+    assert.equal(off.json.state.paused, false, '预设模式没有可断开的连接，不能把 paused 置上');
+    assert.equal(off.json.state.hostChannel.ok, true);
+    assert.match(off.json.note, /没有可断开的连接/);
+
+    const on = await call(route, {
+      method: 'POST',
+      url: '/formatjiang/api/connect',
+      headers: { host: '127.0.0.1:5173', 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(on.status, 200, JSON.stringify(on.json));
+    assert.equal(on.json.ok, true);
+    assert.match(on.json.note, /不用重连/);
+    assert.equal(record.mounts.length, 0, '预设模式不该在宿主层挂桥接');
+  } finally {
+    record.disposers.forEach((dispose) => dispose());
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * mountScope: off 是主动配置，不是 preset 的另一种写法：connect 不能套用「桥接由预设负责」，
+ * disconnect 也不能假装断开了一条根本不存在的桥接。
+ */
+test('mountScope: off 时 connect 与 disconnect 说清「配置关闭」，不套用预设的说法', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-off-scope-'));
+  const { ctx, record } = makeCtx();
+  try {
+    plugin.apply(ctx, {
+      executablePath: EXE,
+      installationId: 'ins_off_scope',
+      dataDir: dir,
+      mountScope: 'off',
+      autoReconnect: false,
+    });
+
+    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const snap = await status.execute({});
+    assert.match(snap.text, /桥接已关闭/);
+    assert.match(snap.text, /mountScope: off/);
+
+    const connect = record.tools.find((tool) => tool.name === 'formatjiang_connect');
+    const result = await connect.execute({});
+    assert.equal(result.ok, false);
+    assert.match(result.text, /mountScope: off/);
+    assert.doesNotMatch(result.text, /官方 mcp 客户端/, 'off 与 preset 是两种配置，不能混用一句话');
+
+    const disconnect = record.tools.find((tool) => tool.name === 'formatjiang_disconnect');
+    const stopped = await disconnect.execute({});
+    assert.equal(stopped.ok, false);
+    assert.match(stopped.text, /没有可断开的连接/);
+    assert.equal(record.unmounts, 0);
+  } finally {
+    record.disposers.forEach((dispose) => dispose());
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // 暂存必须拒绝目录跳转，并且正常复制不改用户原件。
 test('附件暂存拒绝路径逃逸并保留原件', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-stage-audit-'));
@@ -1015,7 +1093,7 @@ test('webServer 没就绪时其余装配照常，只是面板接口没挂上', (
   const { ctx, record } = makeCtx({ missing: ['webServer'] });
   plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_noweb' });
 
-  assert.equal(record.tools.length, 11, '工具不应因为面板服务缺席而消失');
+  assert.equal(record.tools.length, 12, '工具不应因为面板服务缺席而消失');
   assert.equal(record.prompts.length, 1, '系统提示应当照常注册');
   assert.equal(record.skills.length, 1, '工作流技能应当照常注册');
   assert.equal(record.routes.length, 0, 'webServer 缺席时不应当有面板路由');
@@ -1026,7 +1104,7 @@ test('mcpManager 没就绪时工具照常装配，状态说明在等服务', asy
   const { ctx, record } = makeCtx({ missing: ['mcpManager'] });
   plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_nomcp' });
 
-  assert.equal(record.tools.length, 11);
+  assert.equal(record.tools.length, 12);
   assert.equal(record.mounts.length, 0, '服务没起来时不应当假装挂过桥接');
   assert.equal(record.routes.length, 1, '面板路由与 mcpManager 无关，仍应挂上');
 
@@ -1044,7 +1122,7 @@ test('单条工具注册失败只记一笔，其余工具与面板照常', () =>
   };
   plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_onetool' });
 
-  assert.equal(record.tools.length, 10, '坏掉的那条不注册，其余照常');
+  assert.equal(record.tools.length, 11, '坏掉的那条不注册，其余照常');
   assert.equal(record.routes.length, 1, '面板路由不应当被一条工具连累');
   const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
   assert.ok(status, '状态工具本身不应当被连累');
@@ -1144,20 +1222,126 @@ test('宿主那一份选了 mountScope: preset 就不再挂桥接，状态里说
   // 桥接这一件事已经完全交给预设；宿主再挂一次就又变成全局可见了。
   assert.equal(record.mounts.length, 0);
   // 插件页、工具、技能与命令都还归宿主这一份，缩水只缩桥接。
-  assert.equal(record.tools.length, 11);
+  assert.equal(record.tools.length, 12);
   assert.equal(record.routes.length, 1);
 
   const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
   const snap = await status.execute({});
   assert.equal(snap.mountScope, 'preset');
   assert.equal(snap.server.state, 'unmounted');
-  assert.match(snap.text, /桥接由「格式匠」预设提供/);
+  assert.match(snap.text, /业务工具由「格式匠」预设里的官方 mcp 客户端/);
 
   // 手动连接按钮要给出同一条说明，而不是一句「未挂载」。
+  // preset 模式下这不是故障：桥接归预设里的官方 mcp 客户端，宿主没有可重建的连接，
+  // 宿主通道可用时这条调用算成功（见 presetScopeNote）。
   const connect = record.tools.find((tool) => tool.name === 'formatjiang_connect');
   const result = await connect.execute({});
-  assert.equal(result.ok, false);
-  assert.match(result.text, /「格式匠」预设/);
+  assert.equal(result.ok, true, result.text);
+  assert.match(result.text, /不用重连/);
+  assert.match(result.text, /宿主通道：可用/);
+  assert.ok(result.text.includes('「格式匠」预设'), result.text);
+});
+
+/**
+ * 这一组守的是 preset 模式用官方 mcp 客户端的那条配置：
+ *
+ * 宿主这一份看不到预设里那份客户端的连接状态（没有交接记录），所以 `snap.ok` 永远是
+ * false。以前 `callHost` 与附件暂存拿它当门禁，附件与会话操作因此全被挡死，模型只能
+ * 回一句「没选预设」。宿主通道与桥接是两条路，必须各有各的门禁与状态。
+ */
+test('预设用官方 mcp 客户端时（没有交接记录），宿主工具照常可用', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-preset-host-'));
+  const { ctx, record } = makeCtx();
+  try {
+    plugin.apply(ctx, {
+      executablePath: EXE,
+      installationId: 'ins_preset_host',
+      dataDir: dir,
+      mountScope: 'preset',
+      autoReconnect: false,
+    });
+    // 这是 preset 模式的既定分工：宿主这一份不挂桥接，桥接归预设里的官方 mcp 客户端。
+    assert.equal(record.mounts.length, 0);
+
+    const source = path.join(dir, 'draft.docx');
+    fs.writeFileSync(source, 'preset-host');
+    const exec = { agent: { session: { header: { id: 'preset-chat' } } } };
+    let stagedPath = '';
+    globalThis.__fjExec = {
+      respond(call, done) {
+        assert.equal(call.args[1], 'host');
+        assert.equal(call.args.at(-1), 'preset-chat');
+        assert.equal(call.input.name, 'receive_file');
+        stagedPath = call.input.arguments.source_path;
+        done(null, JSON.stringify({ status: 'ok', data: { file: { file_id: 'f_preset' } } }), '');
+      },
+    };
+
+    const stage = record.tools.find((tool) => tool.name === 'formatjiang_stage_attachment');
+    const staged = await stage.execute({ path: source }, exec);
+    assert.equal(staged.ok, true, staged.text);
+    assert.equal(staged.data.file.file_id, 'f_preset');
+    // 收件区必须落在格式匠自己的数据目录里，不能跑到当前工作目录下。
+    assert.equal(path.relative(path.join(dir, 'mcp-files', 'inbox'), stagedPath).startsWith('..'), false);
+
+    // 会话身份同样走宿主通道：它以前也被「还没连上」挡住。
+    globalThis.__fjExec = {
+      respond(call, done) {
+        assert.equal(call.input.name, 'get_session_binding');
+        done(null, JSON.stringify({ status: 'ok', data: { binding: null } }), '');
+      },
+    };
+    const session = record.tools.find((tool) => tool.name === 'formatjiang_session');
+    const bound = await session.execute({ action: 'get' }, exec);
+    assert.equal(bound.ok, true, bound.text);
+
+    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const snap = await status.execute({});
+    assert.equal(snap.mountScope, 'preset');
+    assert.equal(snap.presetBridge, null, '官方客户端不写交接记录');
+    assert.equal(snap.server.state, 'unmounted');
+    assert.equal(snap.hostChannel.ok, true);
+    assert.equal(snap.ok, true, '宿主通道可用时不能把整条接入判成不可用');
+    assert.match(snap.text, /宿主通道：可用/);
+    assert.doesNotMatch(snap.text, /还没连上/);
+    assert.doesNotMatch(snap.text, /选了这个预设的会话才加载/);
+    assert.doesNotMatch(snap.text, /再等一个回合/);
+  } finally {
+    delete globalThis.__fjExec;
+    record.disposers.forEach((dispose) => dispose());
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('宿主通道缺安装 ID 时报缺什么，不再说「还没连上」', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-preset-noins-'));
+  const { ctx, record } = makeCtx();
+  try {
+    // 空的临时数据目录里没有格式匠数据库：安装 ID 发现不了，这是配置问题，不是连接问题。
+    plugin.apply(ctx, { executablePath: EXE, installationId: '', dataDir: dir, mountScope: 'preset', autoReconnect: false });
+    const stage = record.tools.find((tool) => tool.name === 'formatjiang_stage_attachment');
+    const source = path.join(dir, 'draft.docx');
+    fs.writeFileSync(source, 'x');
+    let spawns = 0;
+    globalThis.__fjExec = { respond() { spawns += 1; assert.fail('通道不可用时不该起宿主进程'); } };
+
+    const staged = await stage.execute({ path: source }, { agent: { session: { header: { id: 'noins-chat' } } } });
+    assert.equal(staged.ok, false);
+    assert.match(staged.text, /宿主通道不可用/);
+    assert.doesNotMatch(staged.text, /还没连上/);
+    assert.equal(spawns, 0);
+
+    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const snap = await status.execute({});
+    assert.equal(snap.hostChannel.ok, false);
+    assert.match(snap.text, /宿主通道：不可用/);
+    // 没有交接记录、宿主通道又不可用：整体确实还没接好，不能硬报成功。
+    assert.equal(snap.ok, false);
+  } finally {
+    delete globalThis.__fjExec;
+    record.disposers.forEach((dispose) => dispose());
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('预设作用域那一份只挂桥接，不注册工具、提示、技能、命令与面板', async () => {
@@ -1357,7 +1541,9 @@ test('交接台上超过十分钟的记录不再当成现在', async () => {
     const snap = await status.execute({});
 
     assert.equal(snap.presetBridge, null, '过期记录不能当成现在的状态');
-    assert.equal(snap.ok, false);
+    // 过期记录只说明「预设那一份的交接看不清了」；宿主通道仍然可用，整体不算故障。
+    assert.equal(snap.ok, true, '过期的交接记录不该把整条接入判成不可用');
+    assert.equal(snap.hostChannel.ok, true);
     assert.equal(snap.label, '由预设提供');
     assert.doesNotMatch(snap.text, /预设桥接：connected/);
   } finally {

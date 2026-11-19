@@ -1,6 +1,8 @@
 # 格式匠论文助手（DSH 插件）
 
-把本机格式匠的论文工具接进 DeepSeek Harness。插件自己**不实现**论文能力，职责只有四件事：找到格式匠、拉起桥接、断开后重连、把状态和结果讲清楚。所有论文操作仍然是格式匠提供的 `mcp__formatjiang__*` 工具。
+把本机格式匠的论文工具接进 DeepSeek Harness。插件自己**不实现**论文能力，职责是：找到格式匠、维护工具连接、跑宿主通道（附件收件与会话身份）、把状态和结果讲清楚。所有论文操作仍然是格式匠提供的 `mcp__formatjiang__*` 工具。
+
+> 这里是不带截图的简版。完整说明在 [docs/README.md](docs/README.md)：`mountScope` 与「格式匠」预设怎么接入、装好之后三步怎么点（带图）、断线与装配失败的排查。
 
 ## 装之前需要满足的条件
 
@@ -32,20 +34,35 @@ New-Item -ItemType Junction -Path $target -Target 'D:\GoRoom\docx-cli\dsh-plugin
 | `executablePath` | 空 | 格式匠程序路径。留空时依次试 `FORMATJIANG_HOME`、桌面 `formatjiang` 目录、`%LOCALAPPDATA%\Programs\formatjiang`、`%ProgramFiles%\formatjiang` |
 | `installationId` | 空 | 本机安装 ID。留空时从格式匠数据库里挑一条未吊销的 stdio 安装，优先 `dsh`，其次 `generic_stdio` |
 | `dataDir` | 空 | 格式匠数据目录。留空时用 `FORMATJIANG_DATA_DIR`，再退到 `<用户主目录>\formatjiang-data` |
+| `mountScope` | `host` | 桥接挂在哪：`host` = 插件在宿主层挂（每个会话都可见）；`preset` = 交给「格式匠」预设里的官方 mcp 客户端（只有选那个预设的会话可见，省下每轮的工具体积）；`off` = 都不挂。宿主工具（附件、会话）两种模式都可用，见下一节 |
 | `startupTimeoutMs` | 90000 | 首次拉起格式匠并等桥接可用的上限 |
 | `toolCallTimeoutMs` | 270000 | 单次工具调用超时。格式匠网关自己的写超时是 5 分钟，超过一定被掐断，这里只留 30 秒余量 |
 | `autoReconnect` | `true` | 宿主放弃重试（`failed`）后，插件按 15、30、60 秒各重挂一次；装更新、用户完全退出格式匠时不重挂 |
 
+## 两条通道（为什么预设模式下附件还能用）
+
+插件维护两条互不依赖的路，排障时先分清是哪一条出问题：
+
+- **业务工具** `mcp__formatjiang__*`：由 MCP 桥接提供。`mountScope: host` 时插件在宿主层挂桥接，每个会话都看得见；`mountScope: preset` 时挂载交给「格式匠」预设里的官方 mcp 客户端，只有选那个预设的会话看得见。格式匠退出后它们会从工具表消失，重连回来后外部服务工具名还可能带新的随机后缀。
+- **宿主工具** `formatjiang_*`：不经过桥接。附件收件、会话绑定、稿件导入、成品取回这些动作按需执行一次 `格式匠.exe mcp host --installation-id <id> --chat-id <会话>`，只要求「程序 + 安装 ID + 格式匠在运行」，与工具表里有没有业务工具无关。
+
+所以：插件页把桥接写成「由「格式匠」预设提供」时，附件与会话工具照常可用；反过来，业务工具在表里也不代表宿主通道一定可用（缺安装 ID、正在装更新、手动断开时它会明确说缺什么）。`formatjiang_status` 的 `hostChannel` 字段报的就是第二条通道，`usable` 表示这套接入有没有配置层面的故障。
+
 ## 它给了你什么
 
-**工具（6 个，都是连接与诊断，不代理业务）**
+**工具（11 个，都归宿主这份：连接诊断 + 聊天身份与附件搬运，不代理业务）**
 
-- `formatjiang_status`：桥接状态、工具数量、重试进度、最近错误、程序与安装 ID 是否找到。连不上时先看它。
-- `formatjiang_connect`：重新发现并挂载桥接。改完配置、或 DSH 放弃重连（重试 10 次后）用它。
+- `formatjiang_status`：桥接与宿主通道各自的状态、工具数量、重试进度、最近错误、程序与安装 ID 是否找到。连不上时先看它。
+- `formatjiang_connect`：重新发现并挂载桥接。改完配置、或 DSH 放弃重连（重试 10 次后）用它；`mountScope: preset` 时它只说明「不用重连」，因为此时没有归宿主管的连接。
 - `formatjiang_open`：打开格式匠。格式匠没运行时桥接连不上，先开它。
-- `formatjiang_diagnostics`：生成一段可直接复制到工单里的接入信息：状态、程序路径、安装 ID、数据目录、最近一次错误原文。**不含 token**。
+- `formatjiang_diagnostics`：生成一段可直接复制到工单里的接入信息：状态、程序路径、安装 ID、数据目录、两条通道的状态、最近一次错误原文。**不含 token**。
 - `formatjiang_catalog`：列出网关当前暴露的工具、固定资源、资源模板与提示词（名字与一行说明）。用户问「连上了能用哪些」时用它；读一次缓存 10 分钟，`refresh: true` 重新问。
 - `formatjiang_disconnect`：主动断开桥接并暂停自动重连，方便调试「连不上」的一侧。断开后所有 `mcp__formatjiang__` 工具都不可用，直到下一次显式连接。
+- `formatjiang_stage_attachment`：把用户指定的本机文件复制进格式匠收件区并登记成附件，返回 `file_id`；走宿主通道，不依赖业务工具在不在表里。
+- `formatjiang_session`：读取、绑定或解除本次真实聊天的当前论文。
+- `formatjiang_import_document`：把已接收的附件导入格式匠，新建论文或往既有论文追加版本。
+- `formatjiang_use_attachments`：在本次聊天里使用已接收的附件——导入知识库或整理投稿包。
+- `formatjiang_save_file`：把格式匠的 `file_id` 保存成本机文件，校验大小与摘要后才算成功。
 
 **连接后获得的能力清单**
 
@@ -57,7 +74,7 @@ New-Item -ItemType Junction -Path $target -Target 'D:\GoRoom\docx-cli\dsh-plugin
 
 技能正文按任务链组织：从收稿到交付、套版、提交检查、引文核对、找格式与共坊、资料与投稿、断线恢复。模型只在真要做这些事时才用 `skill` 工具加载，不占每轮系统提示词：
 
-1. 新稿从对话走到成品：`formatjiang_stage_attachment` 把文件复制进收件区 → `receive_file` 登记 → `import_document` 建论文或追加版本 → `bind_session` 绑定会话 → `read_document_outline` / `read_document_chunk` / `search_document` 读稿 → `create_structure_plan` / `confirm_structure_plan` 确认结构 → `preview_layout_plan` → `apply_layout_as_branch` → `start_diagnostic_run` / `get_diagnostic_status` / `list_findings` 检查 → `generate_commented_docx` / `generate_revision_draft` / `export_diagnostic_report` 导出 → `fetch_file` 取回成品。
+1. 新稿从对话走到成品：`formatjiang_stage_attachment` 把文件复制进收件区并自动登记（这一段的宿主通道不依赖业务工具）→ `formatjiang_import_document` 建论文或追加版本 → `formatjiang_session` 绑定会话 → `read_document_outline` / `read_document_chunk` / `search_document` 读稿 → `create_structure_plan` / `confirm_structure_plan` 确认结构 → `preview_layout_plan` → `apply_layout_as_branch` → `start_diagnostic_run` / `get_diagnostic_status` / `list_findings` 检查 → `generate_commented_docx` / `generate_revision_draft` / `export_diagnostic_report` 导出 → `formatjiang_save_file` 取回成品。
 2. 套版：`list_papers` → `list_versions` → `list_layout_configs` → `preview_layout_plan`（可带套用范围）→ 把冲突与影响讲清楚 → 用户明确同意后 `apply_layout_as_branch`。
 3. 提交检查：`list_diagnostic_profiles` → `start_diagnostic_run`（或同步 `run_paper_diagnostic`）→ `get_diagnostic_status({ run_id, wait_seconds: 120 })` 一直等到 status 不是 running（还在跑就再调一次，最多 180 秒一次）→ `list_findings` 分页读问题，数字必须有工具结果出处。结果在对话里给出来，不要让用户切到应用里自己看。
 4. 引文页码核对：`preview_citation_check` → `start_citation_check` → `list_citation_check_items` → `get_citation_check_item`；缺来源时 `list_citation_source_candidates` 与 `preflight_citation_source`。
@@ -163,4 +180,4 @@ cd D:\GoRoom\docx-cli\dsh-plugin
 npm test
 ```
 
-两组用例都不需要 DSH 运行时：Host 侧用替身 ctx 校验桥接条目、四个工具、系统提示节、技能、命令与面板鉴权；Client 侧用最小 React 替身摊平组件树，校验槽位注册、插件页连接卡（含「需要修复」态）、两种工具卡的解析与降级。
+两组用例都不需要 DSH 运行时：Host 侧用替身 ctx 校验桥接条目、十一个工具、系统提示节、技能、命令与面板鉴权；Client 侧用最小 React 替身摊平组件树，校验槽位注册、插件页连接卡（含「需要修复」态）、两种工具卡的解析与降级。

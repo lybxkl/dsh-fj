@@ -842,3 +842,83 @@ test('预设里没有记录时，插件页不画红灯，改说明去哪儿用',
     restore();
   }
 });
+
+/**
+ * 官方 mcp 客户端不写交接记录，预设里那条「已连接」永远不存在：第三步不能因此
+ * 一直显示未完成。机器三步齐了（usable）就该标成就绪，剩下的只是去预设会话里用。
+ */
+test('预设里没有交接记录时，设置页按宿主通道把这步标成就绪', async () => {
+  async function renderWith(state) {
+    // 每个 fixture 都要用新的 hook 替身：它按调用顺序复用 slot，换状态会读到上一份。
+    const react = createHookReact();
+    const restore = stubStateFetch(state);
+    try {
+      const settings = pickCard('settings.section', 'formatjiang', react).component;
+      render(settings({}));
+      await flush();
+      react.reset();
+      return text(settings({}));
+    } finally {
+      restore();
+    }
+  }
+
+  const ready = await renderWith(stateFixture({
+    mountScope: 'preset',
+    usable: true,
+    tone: 'idle',
+    label: '由预设提供',
+    detail: '',
+    server: { name: 'formatjiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
+    presetBridge: null,
+  }));
+  assert.match(ready, /本机已就绪，在「格式匠」预设的会话里使用/);
+  assert.match(ready, /宿主工具（附件、会话）不经过桥接/);
+
+  // 配置不全（缺安装 ID，宿主算出的 usable 为假）时不能谎报就绪。
+  const missing = await renderWith(stateFixture({
+    mountScope: 'preset',
+    usable: false,
+    tone: 'idle',
+    label: '由预设提供',
+    detail: '',
+    server: { name: 'formatjiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
+    presetBridge: null,
+    formatjiang: { executable: EXE, installationId: '', installationKind: '', dataDir: '', mcpEnabled: true, port: 0 },
+  }));
+  assert.doesNotMatch(missing, /本机已就绪/);
+  assert.match(missing, /在「格式匠」预设的会话里使用/);
+});
+
+/**
+ * mountScope: off 是用户自己选的配置，不是故障：面板不能画成「桥接没有挂上、点重新连接」，
+ * 那个按钮在 off 模式下按了也只会回一句配置说明。
+ */
+test('mountScope: off 时面板说清是配置选择，不给按不动的重连按钮', async () => {
+  const react = createHookReact();
+  const state = stateFixture({
+    mountScope: 'off',
+    tone: 'idle',
+    label: '桥接已关闭',
+    detail: '',
+    server: { name: 'formatjiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
+    presetBridge: null,
+  });
+  const restore = stubStateFetch(state);
+  try {
+    const card = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+    const props = { view: 'page' };
+    render(card(props));
+    await flush();
+    react.reset();
+    const body = text(card(props));
+
+    assert.match(body, /mountScope: off/);
+    assert.ok(!body.includes('桥接没有挂上'), body);
+    assert.ok(!body.includes('重新连接'), body);
+    // 宿主工具不受影响这件事要说出来，别让用户以为整个插件废了。
+    assert.match(body, /宿主工具（附件、会话）不受影响/);
+  } finally {
+    restore();
+  }
+});
