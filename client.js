@@ -5,7 +5,7 @@
  * 颜色一律走宿主主题令牌，不写死十六进制；数据只从同源接口 /formatjiang/api 读。
  *
  * 卡片只能显示与发请求，不能调用 MCP 工具：按钮要么走本插件的同源接口（打开格式匠、导出诊断），
- * 要么把下一步交回对话（「回复确认套版」由模型带着令牌去执行）。不做点了没反应的按钮。
+ * 要么把下一步交回对话（套版由模型带着令牌直接建分支）。不做点了没反应的按钮。
  */
 (function () {
   var MODULE_ID = '@local/formatjiang-assistant';
@@ -605,7 +605,7 @@
                 ? presetBridge.toolCount + ' 个可用（预设里）'
                 : '由「格式匠」预设提供')
               : '暂不可用'), 'tools'),
-          row('写入', f.safeWrite ? '每次需要确认' : '未开启', 'write'),
+          row('写入', f.safeWrite ? '已开启' : '未开启', 'write'),
           row('连接方式', 'stdio 桥接', 'bridge'),
         ];
         if (f.port) {
@@ -748,7 +748,7 @@
 
       var VERDICT = {
         pass: { label: '可套用', tone: 'ok' },
-        warn: { label: '需要确认', tone: 'warn' },
+        warn: { label: '有冲突', tone: 'warn' },
         block: { label: '已阻断', tone: 'error' },
         legacy_fallback: { label: '旧路径', tone: 'warn' },
       };
@@ -856,7 +856,7 @@
         }
 
         children.push(h('div', { key: 'note', className: 'fj-note' }, token
-          ? '确认后回复「确认套版」，由模型带着这个令牌创建分支版本。分支不会覆盖源文件，也不切换当前版本。'
+          ? '模型会带着这个令牌直接创建分支版本。分支不会覆盖源文件，也不切换当前版本。'
           : '没有可用令牌，本次不能套用。'));
 
         return h(ToolShell, null, children);
@@ -1100,7 +1100,7 @@
             title: installReady ? '这条会话用的本机安装已就绪' : '在格式匠里建一条本机接入',
             hint: installReady
               ? (f.installationId + '（' + (f.installationKind || '本机客户端') + '）')
-              : '格式匠 → 设置 → MCP → 点右上「连接外部助手」→「连接哪个助手」选「其他本机客户端（stdio 桥接）」→ 应用。',
+              : '格式匠 → 设置 → MCP → 点右上「连接外部助手」→「连接哪个助手」选「DeepSeek Harness」→「执行方式」选「信任所选服务」→ 应用。',
           }),
           h(Step, {
             key: 'step3',
@@ -1186,7 +1186,7 @@
           h('div', { style: { marginTop: 18 } },
             h('div', { className: 'fj-k', style: { marginBottom: 6 } }, '在对话里怎么用'),
             h('div', { className: 'fj-card' }, h('ul', { className: 'fj-list' },
-              h('li', { key: 'u1' }, '套版：说「用××模板套一下第 12 版」，看到方案卡后回复「确认套版」才会建分支。'),
+              h('li', { key: 'u1' }, '套版：说「用××模板套一下第 12 版」，方案卡出来后会直接建分支，不覆盖源文件。'),
               h('li', { key: 'u2' }, '提交检查：说「跑一遍提交检查，按学位论文方案」，卡片里可以只看错误。'),
               h('li', { key: 'u3' }, '取证：问「这句引文出自哪篇文献、哪一页」。'),
               h('li', { key: 'u4' }, '排障：输入 /formatjiang 诊断，复制出来的信息不含令牌。'),

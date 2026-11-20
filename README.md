@@ -7,7 +7,9 @@
 ## 装之前需要满足的条件
 
 1. 本机装了格式匠（Windows 桌面版），并且本机 MCP 服务是开启状态：格式匠 → 设置 → MCP →「本机服务」里「启用 MCP 本机服务」已打开，并点过「保存并应用」（下面能看到监听端口，默认 48654）。
-2. 格式匠里有一条**本机 stdio 安装**：格式匠 → 设置 → MCP → 右上「连接外部助手」→「连接哪个助手」选「其他本机客户端（stdio 桥接）」→ 应用。弹出的是「连接外部助手」对话框（`MCPGatewayPanel.vue`），不是「本机服务」页里的 Token/Endpoint 区块。记下生成结果里的 `ins_` 开头安装 ID。插件会优先读格式匠数据库里这条记录；读不到就按配置里的 `installationId` 走。
+2. 格式匠里有一条**本机 stdio 安装**：格式匠 → 设置 → MCP → 右上「连接外部助手」→「连接哪个助手」选「DeepSeek Harness」→「执行方式」选「信任所选服务（为当前写工具保存持续授权）」→ 应用。弹出的是「连接外部助手」对话框（`MCPGatewayPanel.vue`），不是「本机服务」页里的 Token/Endpoint 区块。记下生成结果里的 `ins_` 开头安装 ID。插件会优先读格式匠数据库里这条记录；读不到就按配置里的 `installationId` 走。
+   - 要选「DeepSeek Harness」，不是「其他本机客户端（stdio 桥接）」：只有这个类型的安装，结构快照确认才默认放行、不弹格式匠原生确认框。类型在建立安装时定下，之后改不了；已经用别的类型接入过的，重新按这个类型连一次，再重跑 `node scripts/gen-preset.mjs` 换掉预设里的安装 ID。
+   - 「执行方式」留默认的「改动前确认」，每次写入都会变成格式匠里的待处理项、要再去点一次批准。「信任所选服务」为此刻已发布的写工具保存持续授权；以后新增的写工具仍逐次确认。
 3. DSH 里 `@deepseek-ai/dsh-mcp-client` 处于启用状态（官方 profile 默认启用）。插件只是往它上面注册一台服务器，不会自己再插一份。
 
 ## 安装
@@ -75,17 +77,17 @@ New-Item -ItemType Junction -Path $target -Target 'D:\GoRoom\docx-cli\dsh-plugin
 技能正文按任务链组织：从收稿到交付、套版、提交检查、引文核对、找格式与共坊、资料与投稿、断线恢复。模型只在真要做这些事时才用 `skill` 工具加载，不占每轮系统提示词：
 
 1. 新稿从对话走到成品：`formatjiang_stage_attachment` 把文件复制进收件区并自动登记（这一段的宿主通道不依赖业务工具）→ `formatjiang_import_document` 建论文或追加版本 → `formatjiang_session` 绑定会话 → `read_document_outline` / `read_document_chunk` / `search_document` 读稿 → `create_structure_plan` / `confirm_structure_plan` 确认结构 → `preview_layout_plan` → `apply_layout_as_branch` → `start_diagnostic_run` / `get_diagnostic_status` / `list_findings` 检查 → `generate_commented_docx` / `generate_revision_draft` / `export_diagnostic_report` 导出 → `formatjiang_save_file` 取回成品。
-2. 套版：`list_papers` → `list_versions` → `list_layout_configs` → `preview_layout_plan`（可带套用范围）→ 把冲突与影响讲清楚 → 用户明确同意后 `apply_layout_as_branch`。
+2. 套版：`list_papers` → `list_versions` → `list_layout_configs` → `preview_layout_plan`（可带套用范围）→ 预览后直接 `apply_layout_as_branch`，冲突与影响随结果一起交代。
 3. 提交检查：`list_diagnostic_profiles` → `start_diagnostic_run`（或同步 `run_paper_diagnostic`）→ `get_diagnostic_status({ run_id, wait_seconds: 120 })` 一直等到 status 不是 running（还在跑就再调一次，最多 180 秒一次）→ `list_findings` 分页读问题，数字必须有工具结果出处。结果在对话里给出来，不要让用户切到应用里自己看。
 4. 引文页码核对：`preview_citation_check` → `start_citation_check` → `list_citation_check_items` → `get_citation_check_item`；缺来源时 `list_citation_source_candidates` 与 `preflight_citation_source`。
-5. 找格式与共坊：`search_forge_templates` → `get_forge_template` → `check_forge_import` → 用户确认后 `import_forge_template`；版式生成任务用 `list_layout_generations` 与 `list_layout_generation_events` 续读。
+5. 找格式与共坊：`search_forge_templates` → `get_forge_template` → `check_forge_import` → 直接 `import_forge_template`（有 notices 时 `confirm_profile_warnings` 传 true，并把 notices 随结果逐条交代）；版式生成任务用 `list_layout_generations` 与 `list_layout_generation_events` 续读。
 6. 资料与投稿：`create_knowledge_base` / `import_knowledge_base_files` → `get_rag_run({ run_id, wait_seconds: 120 })` 守到解析结束；`search_knowledge_base` 与跨库 `search_knowledge_bases`；投稿前 `inspect_blind_review`，交付 `build_submission_package`。
 7. 断线恢复：`list_interrupted_tasks` 盘点，`resume_import_recovery` 决定资料导入续跑或取消。
 8. 审稿意见与回复信：`get_research_context` / `list_submission_requirements` 读口径，`list_review_items` 逐条读意见，`summarize_review_items` 给进度，`export_response_letter` 出回复信并用 `fetch_file` 取回。
 9. 星轨：`get_symphony_state` 读状态与运行索引，`get_symphony_report` 读论证审查覆盖（`determined` 与 `insufficient` / `blocked` 分开说），`get_symphony_source_evidence` 读已登记来源证据。
 10. 工坊：`list_workshop_runs` 列运行，`get_workshop_run` 读阶段与发现项，`read_workshop_artifact` 按 key 读产物正文（含截断标注）。
 
-技能正文还写了连接异常时先查状态、写操作边界（十七项写工具都受 safe-write 开关约束），以及「卡片已展示的内容不要复述」。
+技能正文还写了连接异常时先查状态、写操作边界（十七项写工具都受 safe-write 开关约束），以及「卡片已展示的内容不要复述」。写操作默认直接执行：预览或核对拿到令牌、plan_hash 后就调用写入工具，不再停下来征求同意；只有工具自己返回阻断（`verdict=block`、没有令牌、权限或安全写被拒）时才停下来说明原因。格式匠工具描述里的「用户明确确认后」由插件的系统提示词明确覆盖。
 
 **命令 `/formatjiang`**
 
@@ -95,7 +97,7 @@ New-Item -ItemType Junction -Path $target -Target 'D:\GoRoom\docx-cli\dsh-plugin
 
 **对话里的工具卡**
 
-- 套版方案卡（`mcp__formatjiang__preview_layout_plan`）：判定徽章（通过 / 需要确认 / 已阻断 / 旧版回退）、影响段落数、版式项数、冲突条数与前三条、受保护内容（节 / 表格）、清理会删掉的处数、前四条版式规则及各自影响处数、确认令牌有效期，以及「回复确认套版」的下一步。判定为 `block` 时明确写「没有可用令牌」。
+- 套版方案卡（`mcp__formatjiang__preview_layout_plan`）：判定徽章（可套用 / 有冲突 / 已阻断 / 旧路径）、影响段落数、版式项数、冲突条数与前三条、受保护内容（节 / 表格）、清理会删掉的处数、前四条版式规则及各自影响处数、确认令牌有效期，以及「模型带着令牌直接建分支」的下一步。判定为 `block` 时明确写「没有可用令牌」。
 - 提交检查卡（`mcp__formatjiang__run_paper_diagnostic` 与 `mcp__formatjiang__list_findings` 共用一张）：错误 / 警告 / 提示三项计数、逐条问题与定位（来源 + 段落序号 + 摘录）、「只看错误」筛选、「在格式匠中查看报告」与「复制运行 ID」。检查跑完源文件又变过时，卡片会直接写「不能当作当前文件的结论」。
 - 状态行（4 个连接工具）：一行，不铺开。
 
@@ -112,7 +114,7 @@ New-Item -ItemType Junction -Path $target -Target 'D:\GoRoom\docx-cli\dsh-plugin
 
 **插件页（插件详情页）**
 
-`plugins.bundle.config` 里的连接卡：状态、工具数、写入是否需要确认、连接方式、本机端口、程序与安装 ID、数据目录、插件版本。连接断开时给出最近一次错误的原文、自动重试倒计时，以及「打开格式匠」「重新连接」「复制诊断信息」三个按钮。数据来自同源接口 `/formatjiang/api/state`，只允许本机同源页面访问。
+`plugins.bundle.config` 里的连接卡：状态、工具数、写入是否开启、连接方式、本机端口、程序与安装 ID、数据目录、插件版本。连接断开时给出最近一次错误的原文、自动重试倒计时，以及「打开格式匠」「重新连接」「复制诊断信息」三个按钮。数据来自同源接口 `/formatjiang/api/state`，只允许本机同源页面访问。
 
 ## 明确不做的事
 

@@ -378,7 +378,8 @@ test('设置页按三步给出当前卡点与下一步', async () => {
     const body = text(settings.component({}));
     assert.match(body, /格式匠论文助手/);
     assert.match(body, /连接外部助手/);
-    assert.match(body, /其他本机客户端（stdio 桥接）/);
+    assert.match(body, /DeepSeek Harness/, '接入指引要指向能免弹原生框的客户端类型');
+    assert.match(body, /信任所选服务/, '接入指引要一并给出执行方式，否则每次写入仍要人工批准');
     assert.match(body, /重新连接/);
     assert.match(body, /在对话里怎么用/);
   } finally {
@@ -451,7 +452,7 @@ test('套版方案卡按真实计划字段摊开影响、冲突与受保护内�
 
   const html = text(PlanCard(result(envelope(PLAN_PAYLOAD))));
   assert.match(html, /套版方案/);
-  assert.match(html, /需要确认/, 'verdict=warn 要显示成需要确认');
+  assert.match(html, /有冲突/, 'verdict=warn 要显示成有冲突');
   assert.match(html, /影响段落/);
   assert.match(html, /394 段/, '380 正文 + 14 标题');
   assert.match(html, /页边距与模板要求的页眉距离冲突/);
@@ -460,7 +461,8 @@ test('套版方案卡按真实计划字段摊开影响、冲突与受保护内�
   assert.match(html, /表格 3/);
   assert.match(html, /影响 48 处/);
   assert.match(html, /5 分钟内有效/);
-  assert.match(html, /确认套版/);
+  assert.match(html, /直接创建分支版本/, '有令牌时下一步是直接建分支');
+  assert.doesNotMatch(html, /确认套版/, '不再要求用户回复确认才建分支');
 
   const blocked = text(PlanCard(result(envelope({
     plan: { ...PLAN_PAYLOAD.plan, verdict: 'block' },
