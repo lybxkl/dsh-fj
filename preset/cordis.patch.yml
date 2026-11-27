@@ -2,10 +2,10 @@
 # after the web patch. Edits saved from the Web editor override this row's
 # `config.plugins` by id from the profile patch.
 - insert:
-    - id: preset-formatjiang
+    - id: preset-geshijiang
       name: '@deepseek-ai/dsh-agent-preset'
       config:
-        id: formatjiang
+        id: geshijiang
         name: 格式匠
         description: 论文工作：套版、提交检查、资料与页码取证。
         order: 5
@@ -142,12 +142,12 @@
             disabled: !!js "!ctx.get('profileContext')"
           # 格式匠桥接：直接挂官方 mcp 客户端。工具只对选了这个预设的会话可见。
           # 程序路径或安装 ID 变了，重跑 node scripts/gen-preset.mjs 重新生成这一行。
-          - id: formatjiang-bridge
+          - id: geshijiang-bridge
             name: '@deepseek-ai/dsh-mcp-client'
             config:
               transport: stdio
-              serverName: formatjiang
-              command: 'C:\Users\20182\Desktop\formatjiang\格式匠.exe'
+              serverName: geshijiang
+              command: 'C:\Users\20182\Desktop\geshijiang\格式匠.exe'
               args: [mcp, bridge, --installation-id, ins_puc2xdjcqcadbe75]
               failOnStartupError: false
               startupTimeoutMs: 90000

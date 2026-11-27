@@ -1,6 +1,6 @@
 # 格式匠论文助手（DSH 插件）
 
-把本机格式匠的论文工具接进 DeepSeek Harness。插件自己**不实现**论文能力，职责只有四件事：找到格式匠、拉起桥接、断开后重连、把状态和结果讲清楚。所有论文操作仍然是格式匠提供的 `mcp__formatjiang__*` 工具。
+把本机格式匠的论文工具接进 DeepSeek Harness。插件自己**不实现**论文能力，职责只有四件事：找到格式匠、拉起桥接、断开后重连、把状态和结果讲清楚。所有论文操作仍然是格式匠提供的 `mcp__geshijiang__*` 工具。
 
 ## 装之前需要满足的条件
 
@@ -16,24 +16,24 @@
 
 ```powershell
 $profile = 'C:\Users\<你>\.dsh\profiles\desktop'
-$target  = Join-Path $profile 'node_modules\@local\formatjiang-assistant'
+$target  = Join-Path $profile 'node_modules\@local\geshijiang-assistant'
 New-Item -ItemType Junction -Path $target -Target 'D:\GoRoom\docx-cli\dsh-plugin'
 ```
 
 然后在这两处各加一项，重启 DeepSeek Harness：
 
-- `package.json` → `dependencies`：`"@local/formatjiang-assistant": "link:D:/GoRoom/docx-cli/dsh-plugin"`
-- `package.json` → `dsh.profile.bundles`：`"@local/formatjiang-assistant"`
+- `package.json` → `dependencies`：`"@local/geshijiang-assistant": "link:D:/GoRoom/docx-cli/dsh-plugin"`
+- `package.json` → `dsh.profile.bundles`：`"@local/geshijiang-assistant"`
 
 ## 配置
 
-改 profile 里的 `cordis.patch.yml`（`- insert:` 下这条 `id: formatjiang-assistant` 的 `config`）：
+改 profile 里的 `cordis.patch.yml`（`- insert:` 下这条 `id: geshijiang-assistant` 的 `config`）：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `executablePath` | 空 | 格式匠程序路径。留空时依次试 `FORMATJIANG_HOME`、桌面 `formatjiang` 目录、`%LOCALAPPDATA%\Programs\formatjiang`、`%ProgramFiles%\formatjiang` |
+| `executablePath` | 空 | 格式匠程序路径。留空时依次试 `GESHIJIANG_HOME`、桌面 `geshijiang` 目录、`%LOCALAPPDATA%\Programs\geshijiang`、`%ProgramFiles%\geshijiang`。支持安装版 `格式匠.exe` 和发布页便携版 `geshijiang-windows-amd64.exe` |
 | `installationId` | 空 | 本机安装 ID。留空时从格式匠数据库里挑一条未吊销的 stdio 安装，优先 `dsh`，其次 `generic_stdio` |
-| `dataDir` | 空 | 格式匠数据目录。留空时用 `FORMATJIANG_DATA_DIR`，再退到 `<用户主目录>\formatjiang-data` |
+| `dataDir` | 空 | 格式匠数据目录。留空时用 `GESHIJIANG_DATA_DIR`，再退到 `<用户主目录>\geshijiang-data` |
 | `startupTimeoutMs` | 90000 | 首次拉起格式匠并等桥接可用的上限 |
 | `toolCallTimeoutMs` | 270000 | 单次工具调用超时。格式匠网关自己的写超时是 5 分钟，超过一定被掐断，这里只留 30 秒余量 |
 | `autoReconnect` | `true` | 宿主放弃重试（`failed`）后，插件按 15、30、60 秒各重挂一次；装更新、用户完全退出格式匠时不重挂 |
@@ -44,7 +44,7 @@ New-Item -ItemType Junction -Path $target -Target 'D:\GoRoom\docx-cli\dsh-plugin
 
 格式匠有 110 个工具，工具定义加 instructions 每轮约 17k token。挂在宿主层意味着**每个会话**都付这笔钱，哪怕这个会话在写代码、跟格式匠无关。
 
-`mountScope: preset` 把桥接挪进一个 Agent 预设：宿主这半边的插件照旧（插件页、`/formatjiang` 命令、技能、附件工具都还归它），只有桥接这一件事由预设里的那一份负责。预设作用域里注册的工具只对选了这个预设的会话可见。
+`mountScope: preset` 把桥接挪进一个 Agent 预设：宿主这半边的插件照旧（插件页、`/geshijiang` 命令、技能、附件工具都还归它），只有桥接这一件事由预设里的那一份负责。预设作用域里注册的工具只对选了这个预设的会话可见。
 
 **为什么不能继续用 `mcpManager`**：`mcpManager.register()` 是在管理器自己的上下文里挂 mcp 客户端的（`dsh-mcp-manager/src/index.ts` 的 `this.ownerContext.plugin(McpClient, …)`），注册出来的工具属于宿主作用域，换哪个预设都拦不住。所以预设里那一行必须由预设自己挂：现在挂的是官方 `@deepseek-ai/dsh-mcp-client`（插件只在旧的 `bridgeOnly: true` 配置里才自己 `ctx.plugin`，随附预设不用）。
 
@@ -61,12 +61,12 @@ node scripts/gen-preset.mjs 'D:\software\deepseek-harness\resources\app.asar' pr
 生成出来的预设与自带的 `cordis` 预设同一份组成，只在插件列表最后多一条：
 
 ```yaml
-- id: formatjiang-bridge
+- id: geshijiang-bridge
   name: '@deepseek-ai/dsh-mcp-client'
   config:
     transport: stdio
-    serverName: formatjiang
-    command: 'C:\Users\<你>\Desktop\formatjiang\格式匠.exe'
+    serverName: geshijiang
+    command: 'C:\Users\<你>\Desktop\geshijiang\格式匠.exe'
     args: [mcp, bridge, --installation-id, ins_xxxxxxxx]
     failOnStartupError: false
     # 格式匠没运行时不要用光重试额度：默认 10 次（约两分钟）就放弃，
@@ -80,7 +80,7 @@ node scripts/gen-preset.mjs 'D:\software\deepseek-harness\resources\app.asar' pr
 
 **为什么挂官方 mcp 客户端，而不是让本插件顶一条 `bridgeOnly` 行**：预设是一份普通的 Cordis 组成，装配期会逐行等每一条 fiber 就绪；多一条自有插件就多一处可能在装配期挂住的地方（踩过一次：预设里的插件行会让选预设的会话卡在「发起会话没反应」）。官方 `@deepseek-ai/dsh-mcp-client` 是 `references/mcp-bundle.md` 写明的用法，装配行为与自带预设里那些行一致。
 
-代价是程序路径与安装 ID 写死在预设里，格式匠换位置或重新配对之后要重跑 `gen-preset.mjs`（它会从 `%TEMP%\dsh-formatjiang-assistant\state.json` 的 `hostTarget` 里读，也可以用 `--command` / `--installation-id` 指定）。
+代价是程序路径与安装 ID 写死在预设里，格式匠换位置或重新配对之后要重跑 `gen-preset.mjs`（它会从 `%TEMP%\dsh-geshijiang-assistant\state.json` 的 `hostTarget` 里读，也可以用 `--command` / `--installation-id` 指定）。
 
 **mcp-client 这个包怎么取到**：插件不在 profile 目录里（是 junction 指过去的），宿主的解析层只把「配置项目作用域里解析得动」的包名路由到安装目录，`@deepseek-ai/dsh-mcp-client` 不在其中，直接 `import` 会得到 `Cannot find package`。三条路依次试（`importMcpClientModule`）：
 
@@ -90,9 +90,9 @@ node scripts/gen-preset.mjs 'D:\software\deepseek-harness\resources\app.asar' pr
 | 2 | 普通 `import` | 宿主没有 `loader` 服务时还能走这条 |
 | 3 | 用 `import.meta.resolve('@deepseek-ai/dsh-tools')` 的地址换掉包名那一段（`siblingModuleUrl`） | 两个包同属一个安装目录，绕开解析层的路由规则 |
 
-三条都失败时，失败记录里会带上每一步的原文；`/formatjiang/api/state` 的 `mcpClient` 字段会显示成功走的是哪条（`via`）。
+三条都失败时，失败记录里会带上每一步的原文；`/geshijiang/api/state` 的 `mcpClient` 字段会显示成功走的是哪条（`via`）。
 
-**两份实例之间的交接**：宿主那一份与预设那一份是两次 `apply`，内存不共享，而插件页、`formatjiang_status`、`/formatjiang` 命令都归宿主那一份。它们通过 `%TEMP%\dsh-formatjiang-assistant\state.json` 交换两件事：
+**两份实例之间的交接**：宿主那一份与预设那一份是两次 `apply`，内存不共享，而插件页、`geshijiang_status`、`/geshijiang` 命令都归宿主那一份。它们通过 `%TEMP%\dsh-geshijiang-assistant\state.json` 交换两件事：
 
 | 键 | 谁写 | 用在哪 |
 |---|---|---|
@@ -101,11 +101,11 @@ node scripts/gen-preset.mjs 'D:\software\deepseek-harness\resources\app.asar' pr
 
 记录只在十分钟内算「现在」，更旧的当历史。这个文件读不到、写不进都不影响桥接本身，只是少一条旁证。
 
-**预设那一份断了怎么办**：预设里那一行自己带 `reconnect`（2 秒起、最长 15 秒一次、上限 5000 次），格式匠没开就一直等，不会像默认策略那样两分钟就放弃。所以顺序是：**先让格式匠起来**（`formatjiang_open` 会启动应用并等到端口就绪再返回），起来后最多十几秒桥接自己接上，`mcp__formatjiang__*` 工具随之出现在工具表里。报告「用户完全退出」时不要去猜，直接看端口。
+**预设那一份断了怎么办**：预设里那一行自己带 `reconnect`（2 秒起、最长 15 秒一次、上限 5000 次），格式匠没开就一直等，不会像默认策略那样两分钟就放弃。所以顺序是：**先让格式匠起来**（`geshijiang_open` 会启动应用并等到端口就绪再返回），起来后最多十几秒桥接自己接上，`mcp__geshijiang__*` 工具随之出现在工具表里。报告「用户完全退出」时不要去猜，直接看端口。
 
 **两份不要同时挂**：`mountScope: host` 还开着的时候，预设里那条也会去挂，同一个会话就会出现两套同名工具。插件会在预设那一份里拦住并报「宿主那半边已经在挂桥接」，看到这句就把 `mountScope` 改成 `preset`。
 
-**验证**：新建会话时选「格式匠」预设 → 工具表里出现 `mcp__formatjiang__*` 与 110 个网关工具；用别的预设开一个会话 → 这些工具一个都不在。设置页 → 格式匠 的第 3 步会写明「桥接挂在『格式匠』预设上」，不再显示「未挂载」的红条；预设里连过之后，那条说明会带上工具数量与「多久以前」。
+**验证**：新建会话时选「格式匠」预设 → 工具表里出现 `mcp__geshijiang__*` 与 110 个网关工具；用别的预设开一个会话 → 这些工具一个都不在。设置页 → 格式匠 的第 3 步会写明「桥接挂在『格式匠』预设上」，不再显示「未挂载」的红条；预设里连过之后，那条说明会带上工具数量与「多久以前」。
 
 改 `mountScope` 属于插件配置，改完要重启 DSH 才生效（插件热重载只重建插件实例，不重读 bundle patch）。
 
@@ -115,9 +115,7 @@ DSH 升级后如果忘了重新生成，最坏情况是预设里的组成比当�
 
 下面三张图是第一次用时的完整路径，顺序即点击顺序。截图取自插件 v0.4.6 的桌面版。
 
-**第一步，确认预设装上了**：设置 → Agent 预设 → 拉到底部「自定义」分组，应该能看到「格式匠」卡片（标识 `formatjiang`）。没有就先按上一节装 `preset/`。
-
-![设置 → Agent 预设 里的「格式匠」预设](images/preset-in-agent-settings.png)
+**第一步，确认预设装上了**：设置 → Agent 预设 → 拉到底部「自定义」分组，应该能看到「格式匠」卡片（标识 `geshijiang`）。没有就先按上一节装 `preset/`。
 
 **第二步，新会话选它**：输入框左上角的预设切换器（默认写着「创造模式」的那处）点开，选「格式匠」。选别的预设开会话不会加载这些工具，也就不付 110 个工具每轮约 17k token 的开销。
 
@@ -125,25 +123,23 @@ DSH 升级后如果忘了重新生成，最坏情况是预设里的组成比当�
 
 **第三步，核对连接**：设置 → 格式匠 的三步清单都该是绿勾——MCP 服务已开启（带本机端口，默认 48654）、本机安装已就绪（带 `ins_` 安装 ID 与类型）、桥接挂在「格式匠」预设上（本机这步配齐就勾选；预设里真的连过之后，还会带上工具数与「多久以前」）。
 
-![设置 → 格式匠 的三步接入清单](images/formatjiang-settings-status.png)
-
-第三步显示「未挂载」或有红字时不用猜：先看这一页给出的错误原文，或调 `formatjiang_status`。应用没开就先 `formatjiang_open`，起来后最多十几秒桥接自己接上，`mcp__formatjiang__*` 工具随之出现在工具表里。
+连接后，服务名称显示为 `geshijiang-gateway`。第三步显示「未挂载」或有红字时，先看这一页给出的错误原文，或调 `geshijiang_status`。应用没开就先 `geshijiang_open`，桥接连上后，`mcp__geshijiang__*` 工具会出现在工具表里。
 
 ## 它给了你什么
 
 **工具（11 个，都归宿主这份：连接诊断 + 聊天身份与附件搬运，不代理业务）**
 
-- `formatjiang_status`：桥接与宿主通道各自的状态、工具数量、重试进度、最近错误、程序与安装 ID 是否找到。连不上时先看它——「桥接没连上」与「宿主通道不可用」是两件事，读它就能分清。
-- `formatjiang_connect`：重新发现并挂载桥接。改完配置、或 DSH 放弃重连（重试 10 次后）用它；`mountScope: preset` 时没有归宿主管的连接，它只回答「不用重连」并说明下一步。
-- `formatjiang_open`：启动格式匠并**等它的 MCP 端口就绪**再返回（上限 25 秒），告诉你「现在到底能连没有」。起来后桥接自动重连，不用再手动连接；模型在预设会话里发现业务工具不在时，应当先调它。**拉起时不抢焦点**：进程带 `FORMATJIANG_LAUNCH_BACKGROUND=1`，桌面程序只把窗口放进任务栏，不会弹到用户正在看的对话前面。
-- `formatjiang_diagnostics`：生成一段可直接复制到工单里的接入信息：状态、程序路径、安装 ID、数据目录、两条通道的状态、最近一次错误原文。**不含 token**。
-- `formatjiang_catalog`：列出网关当前暴露的工具、固定资源、资源模板与提示词（名字与一行说明）。用户问「连上了能用哪些」时用它；读一次缓存 10 分钟，`refresh: true` 重新问。
-- `formatjiang_disconnect`：主动断开桥接并暂停自动重连，方便调试「连不上」的一侧。断开后所有 `mcp__formatjiang__` 工具都不可用，直到下一次显式连接。
-- `formatjiang_stage_attachment`：把用户这次给的文件复制进格式匠收件区，换一个可导入的 `file_id`。不改原件。
-- `formatjiang_import_document`：把收件区里的文件导入成新论文或追加版本（`request_id` 必须稳定，重试沿用原编号）。
-- `formatjiang_session`：读、绑定或解除本次真实聊天的当前论文。
-- `formatjiang_use_attachments`：在本次聊天里导入知识库或整理投稿包，参数与同名格式匠工具一致。
-- `formatjiang_save_file`：把格式匠的 `file_id` 存成本机文件，校验大小与摘要，不覆盖已有文件。
+- `geshijiang_status`：桥接与宿主通道各自的状态、工具数量、重试进度、最近错误、程序与安装 ID 是否找到。连不上时先看它——「桥接没连上」与「宿主通道不可用」是两件事，读它就能分清。
+- `geshijiang_connect`：重新发现并挂载桥接。改完配置、或 DSH 放弃重连（重试 10 次后）用它；`mountScope: preset` 时没有归宿主管的连接，它只回答「不用重连」并说明下一步。
+- `geshijiang_open`：启动格式匠并**等它的 MCP 端口就绪**再返回（上限 25 秒），告诉你「现在到底能连没有」。起来后桥接自动重连，不用再手动连接；模型在预设会话里发现业务工具不在时，应当先调它。**拉起时不抢焦点**：进程带 `GESHIJIANG_LAUNCH_BACKGROUND=1`，桌面程序只把窗口放进任务栏，不会弹到用户正在看的对话前面。
+- `geshijiang_diagnostics`：生成一段可直接复制到工单里的接入信息：状态、程序路径、安装 ID、数据目录、两条通道的状态、最近一次错误原文。**不含 token**。
+- `geshijiang_catalog`：列出网关当前暴露的工具、固定资源、资源模板与提示词（名字与一行说明）。用户问「连上了能用哪些」时用它；读一次缓存 10 分钟，`refresh: true` 重新问。
+- `geshijiang_disconnect`：主动断开桥接并暂停自动重连，方便调试「连不上」的一侧。断开后所有 `mcp__geshijiang__` 工具都不可用，直到下一次显式连接。
+- `geshijiang_stage_attachment`：把用户这次给的文件复制进格式匠收件区，换一个可导入的 `file_id`。不改原件。
+- `geshijiang_import_document`：把收件区里的文件导入成新论文或追加版本（`request_id` 必须稳定，重试沿用原编号）。
+- `geshijiang_session`：读、绑定或解除本次真实聊天的当前论文。
+- `geshijiang_use_attachments`：在本次聊天里导入知识库或整理投稿包，参数与同名格式匠工具一致。
+- `geshijiang_save_file`：把格式匠的 `file_id` 存成本机文件，校验大小与摘要，不覆盖已有文件。
 
 这五个搬运/身份类工具走的是 `格式匠.exe mcp host`，**不依赖桥接**：桥接交给预设时，它们在任何会话里都能用。
 
@@ -153,11 +149,11 @@ DSH 升级后如果忘了重新生成，最坏情况是预设里的组成比当�
 
 **这个清单要装带 `mcp describe` 的版本**。旧版本会把这个调用当成启动 GUI，插件识别出「没有清单接口」后只显示一行升级提示，不会把它画成「0 个工具」。
 
-**技能 `formatjiang-paper`**
+**技能 `geshijiang-paper`**
 
 技能正文按任务链组织：从收稿到交付、套版、提交检查、引文核对、找格式与共坊、资料与投稿、断线恢复。模型只在真要做这些事时才用 `skill` 工具加载，不占每轮系统提示词：
 
-1. 新稿从对话走到成品：`formatjiang_stage_attachment` 把文件复制进收件区并自动登记（这一段走宿主通道，不依赖业务工具在不在表里）→ `formatjiang_import_document` 建论文或追加版本 → `formatjiang_session` 绑定会话 → `read_document_outline` / `read_document_chunk` / `search_document` 读稿 → `create_structure_plan` / `confirm_structure_plan` 确认结构 → `preview_layout_plan` → `apply_layout_as_branch` → `start_diagnostic_run` / `get_diagnostic_status` / `list_findings` 检查 → `generate_commented_docx` / `generate_revision_draft` / `export_diagnostic_report` 导出 → `formatjiang_save_file` 取回成品。
+1. 新稿从对话走到成品：`geshijiang_stage_attachment` 把文件复制进收件区并自动登记（这一段走宿主通道，不依赖业务工具在不在表里）→ `geshijiang_import_document` 建论文或追加版本 → `geshijiang_session` 绑定会话 → `read_document_outline` / `read_document_chunk` / `search_document` 读稿 → `create_structure_plan` / `confirm_structure_plan` 确认结构 → `preview_layout_plan` → `apply_layout_as_branch` → `start_diagnostic_run` / `get_diagnostic_status` / `list_findings` 检查 → `generate_commented_docx` / `generate_revision_draft` / `export_diagnostic_report` 导出 → `geshijiang_save_file` 取回成品。
 2. 套版：`list_papers` → `list_versions` → `list_layout_configs` → `preview_layout_plan`（可带套用范围）→ 预览后直接 `apply_layout_as_branch`，冲突与影响随结果一起交代。
 3. 提交检查：`list_diagnostic_profiles` → `start_diagnostic_run`（或同步 `run_paper_diagnostic`）→ `get_diagnostic_status({ run_id, wait_seconds: 120 })` 一直等到 status 不是 running（还在跑就再调一次，最多 180 秒一次）→ `list_findings` 分页读问题，数字必须有工具结果出处。结果在对话里给出来，不要让用户切到应用里自己看。
 4. 引文页码核对：`preview_citation_check` → `start_citation_check` → `list_citation_check_items` → `get_citation_check_item`；缺来源时 `list_citation_source_candidates` 与 `preflight_citation_source`。
@@ -170,23 +166,23 @@ DSH 升级后如果忘了重新生成，最坏情况是预设里的组成比当�
 
 技能正文还写了连接异常时先查状态、写操作边界（十七项写工具都受 safe-write 开关约束），以及「卡片已展示的内容不要复述」。写操作默认直接执行：预览或核对拿到令牌、plan_hash 后就调用写入工具，不再停下来征求同意；只有工具自己返回阻断（`verdict=block`、没有令牌、权限或安全写被拒）时才停下来说明原因。格式匠工具描述里的「用户明确确认后」由插件的系统提示词明确覆盖。
 
-**命令 `/formatjiang`**
+**命令 `/geshijiang`**
 
-- `/formatjiang`：一行状态。
-- `/formatjiang 诊断`：等价于 `formatjiang_diagnostics`，输出可复制的接入信息。
-- `/formatjiang 重连`：卸载旧连接并重新挂载桥接。
+- `/geshijiang`：一行状态。
+- `/geshijiang 诊断`：等价于 `geshijiang_diagnostics`，输出可复制的接入信息。
+- `/geshijiang 重连`：卸载旧连接并重新挂载桥接。
 
 **对话里的工具卡**
 
-- 套版方案卡（`mcp__formatjiang__preview_layout_plan`）：判定徽章（可套用 / 有冲突 / 已阻断 / 旧路径）、影响段落数、版式项数、冲突条数与前三条、受保护内容（节 / 表格）、清理会删掉的处数、前四条版式规则及各自影响处数、确认令牌有效期，以及「模型带着令牌直接建分支」的下一步。判定为 `block` 时明确写「没有可用令牌」。
-- 提交检查卡（`mcp__formatjiang__run_paper_diagnostic` 与 `mcp__formatjiang__list_findings` 共用一张）：错误 / 警告 / 提示三项计数、逐条问题与定位（来源 + 段落序号 + 摘录）、「只看错误」筛选、「在格式匠中查看报告」与「复制运行 ID」。检查跑完源文件又变过时，卡片会直接写「不能当作当前文件的结论」。
+- 套版方案卡（`mcp__geshijiang__preview_layout_plan`）：判定徽章（可套用 / 有冲突 / 已阻断 / 旧路径）、影响段落数、版式项数、冲突条数与前三条、受保护内容（节 / 表格）、清理会删掉的处数、前四条版式规则及各自影响处数、确认令牌有效期，以及「模型带着令牌直接建分支」的下一步。判定为 `block` 时明确写「没有可用令牌」。
+- 提交检查卡（`mcp__geshijiang__run_paper_diagnostic` 与 `mcp__geshijiang__list_findings` 共用一张）：错误 / 警告 / 提示三项计数、逐条问题与定位（来源 + 段落序号 + 摘录）、「只看错误」筛选、「在格式匠中查看报告」与「复制运行 ID」。检查跑完源文件又变过时，卡片会直接写「不能当作当前文件的结论」。
 - 状态行（4 个连接工具）：一行，不铺开。
 
 解析不出结构时一律退回原文并标注「未解析」，不编造字段。
 
 **设置页（设置 → 格式匠）**
 
-插件详情页不好找，所以设置侧栏里另给一个同名入口（槽位 `settings.section`，`id: formatjiang`，排在「表情包」之后）。这一页面向第一次用的人：
+插件详情页不好找，所以设置侧栏里另给一个同名入口（槽位 `settings.section`，`id: geshijiang`，排在「表情包」之后）。这一页面向第一次用的人：
 
 1. 三步接入清单，每步都写当前状态与下一步点哪里——MCP 服务是否开启（带上本机端口）、有没有可用的本机安装（带上安装 ID 与类型）、桥接通没通（带上工具数或错误原文）。
 2. 与插件页共用的三个动作：打开格式匠、重新连接、复制诊断信息（同一套 `useConnectionActions`，行为不会两处不一致）。
@@ -195,7 +191,7 @@ DSH 升级后如果忘了重新生成，最坏情况是预设里的组成比当�
 
 **插件页（插件详情页）**
 
-`plugins.bundle.config` 里的连接卡：状态、工具数、写入是否开启、连接方式、本机端口、程序与安装 ID、数据目录、插件版本。连接断开时给出最近一次错误的原文、自动重试倒计时，以及「打开格式匠」「重新连接」「复制诊断信息」三个按钮。数据来自同源接口 `/formatjiang/api/state`，只允许本机同源页面访问。
+`plugins.bundle.config` 里的连接卡：状态、工具数、写入是否开启、连接方式、本机端口、程序与安装 ID、数据目录、插件版本。连接断开时给出最近一次错误的原文、自动重试倒计时，以及「打开格式匠」「重新连接」「复制诊断信息」三个按钮。数据来自同源接口 `/geshijiang/api/state`，只允许本机同源页面访问。
 
 ## 明确不做的事
 
@@ -208,7 +204,7 @@ DSH 升级后如果忘了重新生成，最坏情况是预设里的组成比当�
 ## 限制
 
 - 单次工具调用超过格式匠网关 5 分钟写超时会被掐断；`toolCallTimeoutMs` 只是本地等待上限，不能延长服务端。
-- **「在格式匠中查看报告」不是深链**。格式匠目前没有 URL scheme（`main.go` 只转文件与 URL 打开事件，`handleMacUrlOpen` 仍是预留），诊断报告又是数据库记录、没有文件路径，所以这个按钮只能唤起格式匠，再由「复制运行 ID」把运行 ID 交给用户在格式匠里查找。等格式匠支持 `formatjiang://` 深链后，这两步可以合成一步。
+- **「在格式匠中查看报告」不是深链**。格式匠目前没有 URL scheme（`main.go` 只转文件与 URL 打开事件，`handleMacUrlOpen` 仍是预留），诊断报告又是数据库记录、没有文件路径，所以这个按钮只能唤起格式匠，再由「复制运行 ID」把运行 ID 交给用户在格式匠里查找。等格式匠支持 `geshijiang://` 深链后，这两步可以合成一步。
 - 同一台机器多个 DSH 会话共用一个桥接进程时，各会话共用同一份格式匠安装与工具目录。
 - macOS 未验证；本插件按 Windows 的路径与进程行为编写。
 - 桥接进程是格式匠可执行文件本身。它没有窗口、不读数据库写、不监听端口，但会占用该 exe 的文件句柄。更新脚本现在会先落 `update-in-progress.marker`，桥接两秒内自行退出、脚本等文件释放后再装；这套握手要等含该逻辑的构建才生效，首次更新仍需先关插件或结束无窗口的 `格式匠.exe`。
@@ -219,9 +215,9 @@ DSH 升级后如果忘了重新生成，最坏情况是预设里的组成比当�
 2. **宿主放弃了**：状态变 `failed`、工具被撤掉。插件此时按 15、30、60 秒各重挂一次，插件页写清「约 N 秒后自动重连（第 N 次）」。
 3. **不该重挂的时候**：安装目录有 `update-in-progress.marker`（正在装更新）就等，装完自动接；错误是「用户完全退出格式匠」就先探网关端口，你手动打开格式匠后才接回。
 4. **三次都没成**：停止重试，页面写明「自动重连已停止」。你处理完格式匠那边的问题点「重新连接」即可，这次点击会重新记一轮。
-5. **你自己断开**：插件页或设置页的「断开连接」、工具 `formatjiang_disconnect`、命令 `/formatjiang 断开` 都会卸掉桥接并暂停自动重连——调试断线表现时用它，恢复点一次「重新连接」。
+5. **你自己断开**：插件页或设置页的「断开连接」、工具 `geshijiang_disconnect`、命令 `/geshijiang 断开` 都会卸掉桥接并暂停自动重连——调试断线表现时用它，恢复点一次「重新连接」。
 
-桥接挂在预设上时（`mountScope: preset`）上面的「宿主重挂」不适用：断开、重连都归预设里那条 `dsh-mcp-client`。它按预设里写的 `reconnect` 一直重试，所以这时候唯一的动作是**把格式匠拉起来**——`formatjiang_open` 会做这件事，并等到端口就绪再返回；就绪后最多十几秒工具自己回来。应用已经开着却一直没有业务工具，才是「这个会话没选格式匠预设」；宿主工具（附件、会话身份）与这条判断无关，任何时候都可以直接调。
+桥接挂在预设上时（`mountScope: preset`）上面的「宿主重挂」不适用：断开、重连都归预设里那条 `dsh-mcp-client`。它按预设里写的 `reconnect` 一直重试，所以这时候唯一的动作是**把格式匠拉起来**——`geshijiang_open` 会做这件事，并等到端口就绪再返回；就绪后最多十几秒工具自己回来。应用已经开着却一直没有业务工具，才是「这个会话没选格式匠预设」；宿主工具（附件、会话身份）与这条判断无关，任何时候都可以直接调。
 
 ## 插件自己没装好时
 
@@ -229,7 +225,7 @@ DSH 升级后如果忘了重新生成，最坏情况是预设里的组成比当�
 
 - 单条工具定义写错只跳过那一条，其余工具、提示词、技能、命令与面板路由照常装。
 - `webServer` / `mcpManager` 由宿主不同 bundle 提供，谁先启动没有保证。插件不再把它们写成硬依赖，而是等服务就绪后再装配（`ctx.inject`）；服务缺席时状态里写明「等待 … 服务就绪」，不再永久放弃。
-- `/state` 里多了三个字段：`panel`（面板接口挂没挂上，含失败原文）、`faults`（最近 5 条装配失败原文）、`services`（两个宿主服务是否已就绪）；`hints` 会把它们翻成一句人话，`formatjiang_status` 与 `/formatjiang 诊断` 里也能看到。另有 `hostChannel`（宿主通道能不能起来、缺什么）与 `usable`（这套接入有没有配置层面的故障：预设模式下桥接不归宿主，靠它判断），不要拿 `ok` 一个字段读整套状态。
+- `/state` 里多了三个字段：`panel`（面板接口挂没挂上，含失败原文）、`faults`（最近 5 条装配失败原文）、`services`（两个宿主服务是否已就绪）；`hints` 会把它们翻成一句人话，`geshijiang_status` 与 `/geshijiang 诊断` 里也能看到。另有 `hostChannel`（宿主通道能不能起来、缺什么）与 `usable`（这套接入有没有配置层面的故障：预设模式下桥接不归宿主，靠它判断），不要拿 `ok` 一个字段读整套状态。
 - 插件页与设置页读不到状态时不再只写「正在读取」：会写出 HTTP 状态码或超时原因，并给「重试」按钮。
 
 ## 稳定性与资源

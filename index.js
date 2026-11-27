@@ -21,7 +21,7 @@ import { createRequire } from 'node:module';
 
 import { defineTool as defineToolRaw } from '@deepseek-ai/dsh-tools';
 
-export const name = 'formatjiang-assistant';
+export const name = 'geshijiang-assistant';
 
 /**
  * 只有 tools 是硬依赖。
@@ -35,17 +35,18 @@ export const inject = ['tools'];
 
 const require = createRequire(import.meta.url);
 
-/** 网关里的服务名，决定工具前缀 mcp__formatjiang__。 */
-const SERVER_NAME = 'formatjiang';
-const ROUTE_BASE = '/formatjiang/api';
+/** 网关里的服务名，决定工具前缀 mcp__geshijiang__。 */
+const SERVER_NAME = 'geshijiang';
+const ROUTE_BASE = '/geshijiang/api';
 const EXE_NAME = '格式匠.exe';
+const EXE_NAMES = [EXE_NAME, 'geshijiang.exe', 'geshijiang-windows-amd64.exe'];
 const STARTUP_TIMEOUT_MS = 90000;
 const TOOL_CALL_TIMEOUT_MS = 270000;
 
 /**
  * 桥接不归本插件挂时的说明。
  *
- * 预设作用域下，宿主这半边的插件仍然要在：插件页、/formatjiang 命令、技能与
+ * 预设作用域下，宿主这半边的插件仍然要在：插件页、/geshijiang 命令、技能与
  * 附件工具都靠它。只有桥接这一件事搬进了「格式匠」预设，所以要点明去哪儿找工具，
  * 不然用户只会看到「未挂载」。
  */
@@ -62,7 +63,7 @@ const MOUNT_SCOPE_HINT = {
 
 /**
  * 同一个插件在 profile 里可能有两份：宿主那一份（工具、面板、命令、技能）与预设那一份
- * （只挂桥接）。它们是两次 apply，内存不共享；而插件页、formatjiang_status 与 /formatjiang
+ * （只挂桥接）。它们是两次 apply，内存不共享；而插件页、geshijiang_status 与 /geshijiang
  * 命令都归宿主那一份——预设里到底连上没有，宿主那一份自己看不到。
  *
  * 这里用一个小文件当交接台，两个方向各自有用：
@@ -75,9 +76,9 @@ const MOUNT_SCOPE_HINT = {
 const SHARED_STATE_FILE = (() => {
   try {
     // 测试与多 profile 并行时要能把这份交接台挪走，不能默认写进用户真身那份。
-    const override = String(process.env.FORMATJIANG_STATE_FILE || '').trim();
+    const override = String(process.env.GESHIJIANG_STATE_FILE || '').trim();
     if (override) return path.resolve(override);
-    return path.join(os.tmpdir(), 'dsh-formatjiang-assistant', 'state.json');
+    return path.join(os.tmpdir(), 'dsh-geshijiang-assistant', 'state.json');
   } catch {
     return '';
   }
@@ -191,9 +192,9 @@ const BRIDGE_PROBE_TIMEOUT_MS = 2500;
  *
  * 桌面程序启动要过几步：进程起来、打开数据库、再拉起 MCP 服务，冷启动十几秒很常见。
  * 调用方（模型）需要一个「现在到底就绪没有」的事实，否则只能回一句「等一会再试」。
- * 上限 25 秒；测试用 FORMATJIANG_OPEN_WAIT_MS 调小，避免每条用例都等满。
+ * 上限 25 秒；测试用 GESHIJIANG_OPEN_WAIT_MS 调小，避免每条用例都等满。
  */
-const OPEN_WAIT_MS = Math.max(0, Number(process.env.FORMATJIANG_OPEN_WAIT_MS) || 25000);
+const OPEN_WAIT_MS = Math.max(0, Number(process.env.GESHIJIANG_OPEN_WAIT_MS) || 25000);
 const OPEN_WAIT_INTERVAL_MS = 600;
 
 /**
@@ -215,7 +216,7 @@ const CATALOG_DESC_LIMIT = 80;
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1', '0:0:0:0:0:0:0:1']);
 
 /** 随插件注册的工作流技能名；模型用 skill 工具按名字加载它。 */
-const SKILL_NAME = 'formatjiang-paper';
+const SKILL_NAME = 'geshijiang-paper';
 
 /** 插件版本，取自同目录的 package.json；读不到就留空，不编造。 */
 const PLUGIN_VERSION = (() => {
@@ -235,16 +236,16 @@ const PLUGIN_VERSION = (() => {
 const SKILL_CONTENT = [
   '# 格式匠论文工作流',
   '',
-  '本机格式匠通过 `mcp__formatjiang__*` 工具提供论文项目、受管版本、版式配置、提交检查、引文核对与本地资料。所有流程共用同一条前提：**先发现 ID 再动手**，任何数字都要能在工具返回里找到出处。',
+  '本机格式匠通过 `mcp__geshijiang__*` 工具提供论文项目、受管版本、版式配置、提交检查、引文核对与本地资料。所有流程共用同一条前提：**先发现 ID 再动手**，任何数字都要能在工具返回里找到出处。',
   '',
   '## 连接异常',
   '',
   '格式匠有两条通道，先分清是哪一条出问题，别互相等：',
   '',
-  '- **业务工具**（`mcp__formatjiang__*`）：由 MCP 连接提供。preset 模式下来自「格式匠」预设里的官方 mcp 客户端，本会话没选那个预设就没有它们；格式匠退出后它们会从工具表消失，重连回来后外部服务工具名还可能带新的随机后缀，以当前工具表为准。',
-  '- **宿主工具**（`formatjiang_*`）：走独立的本机通道（`格式匠.exe mcp host`），只要程序与安装 ID 在、格式匠在运行就能用，不需要业务工具先出现。附件收件、会话绑定、成品取回都走这条。',
+  '- **业务工具**（`mcp__geshijiang__*`）：由 MCP 连接提供。preset 模式下来自「格式匠」预设里的官方 mcp 客户端，本会话没选那个预设就没有它们；格式匠退出后它们会从工具表消失，重连回来后外部服务工具名还可能带新的随机后缀，以当前工具表为准。',
+  '- **宿主工具**（`geshijiang_*`）：走独立的本机通道（`格式匠.exe mcp host`），只要程序与安装 ID 在、格式匠在运行就能用，不需要业务工具先出现。附件收件、会话绑定、成品取回都走这条。',
   '',
-  '工具报连接错误或调用超时，先 `formatjiang_status`：它分别报桥接与宿主通道。格式匠没在运行就 `formatjiang_open`（会等端口就绪）；`formatjiang_connect` 只在 mountScope 是 host 时才有意义，preset 模式下它只会说「不用重连」。不要在断线状态下反复重试业务工具，也不要把连接失败说成论文本身的问题。',
+  '工具报连接错误或调用超时，先 `geshijiang_status`：它分别报桥接与宿主通道。格式匠没在运行就 `geshijiang_open`（会等端口就绪）；`geshijiang_connect` 只在 mountScope 是 host 时才有意义，preset 模式下它只会说「不用重连」。不要在断线状态下反复重试业务工具，也不要把连接失败说成论文本身的问题。',
   '',
   '用户要求的是「在格式匠里建论文 / 套版」而这条链路走不通时，停下来把阻塞点与下一步讲清楚并问用户；不要用手写脚本排版冒充格式匠的产物。',
   '',
@@ -252,16 +253,16 @@ const SKILL_CONTENT = [
   '',
   '这是最长的一条链，中途任何一步都可能中断，所以每步都留下可以用编号接着做的位置。',
   '',
-  '1. `formatjiang_stage_attachment({ path })` 把用户交给你的文件复制进格式匠收件区，拿到 `file_id`；这一步走宿主通道，不依赖业务工具是否在表里，收件区也只接受这一步送进去的文件。',
+  '1. `geshijiang_stage_attachment({ path })` 把用户交给你的文件复制进格式匠收件区，拿到 `file_id`；这一步走宿主通道，不依赖业务工具是否在表里，收件区也只接受这一步送进去的文件。',
   '2. 暂存工具已经通过宿主通道登记附件并返回 file_id，不要再调用 receive_file；它还会绑定本次真实聊天。',
-  '3. `formatjiang_import_document({ file_id, as_new_paper, request_id })`：新建论文；或传 `paper_id`（可加 `parent_version_id`）往既有论文追加版本。两者必须二选一，都不给会直接报错，不会替你新建论文。返回 `version_id` 后再进下一步；不要跳过导入直接改原文件。',
-  '4. `formatjiang_session({ action: "bind", paper_id, version_id })` 把本机绑定到这篇论文（绑定按本机共享，所有对话共用一份）；换会话或断线后用 `formatjiang_session({ action: "get" })` 取回，不要重新问用户是哪一篇。',
+  '3. `geshijiang_import_document({ file_id, as_new_paper, request_id })`：新建论文；或传 `paper_id`（可加 `parent_version_id`）往既有论文追加版本。两者必须二选一，都不给会直接报错，不会替你新建论文。返回 `version_id` 后再进下一步；不要跳过导入直接改原文件。',
+  '4. `geshijiang_session({ action: "bind", paper_id, version_id })` 把本机绑定到这篇论文（绑定按本机共享，所有对话共用一份）；换会话或断线后用 `geshijiang_session({ action: "get" })` 取回，不要重新问用户是哪一篇。',
   '5. `read_document_outline` → `read_document_chunk` 读稿；`search_document` 在全文里找具体句子。读到的是受管版本的真实正文，不要凭篇名推测内容。',
-  '6. `create_structure_plan` 生成段落分类计划，`get_structure_plan` 复核条目，随后直接 `confirm_structure_plan({ plan_id, expected_plan_hash })` 落成已确认快照，不要为征求同意停下来；条目类型要改就在 `changes` 里按段落序号改。计划过期或源文件变过会返回 `FJ_SOURCE_CHANGED`，此时重新 `create_structure_plan`，不要拿旧计划硬套。',
-  '7. `list_layout_configs` 找模板 → `preview_layout_plan` 预览影响范围（可带 `scope_mode` 与 `scope_selected_types` 只套部分段落类型）→ 预览后直接 `apply_layout_as_branch`。每次预览都会签发新的 `confirmation_token`；重新预览后要换一个新的 `request_id`——同一个 `request_id` 配新令牌会被当成「另一个请求」拒绝（FJ_CONFLICT）。只有同一次预览内的网络重试才沿用原编号。',
+  '6. `create_structure_plan` 生成段落分类计划，`get_structure_plan` 复核条目，随后直接 `confirm_structure_plan({ plan_id, expected_plan_hash })` 落成已确认快照，不要为征求同意停下来；条目类型要改就在 `changes` 里按段落序号改。计划过期或源文件变过会返回 `GESHIJIANG_SOURCE_CHANGED`，此时重新 `create_structure_plan`，不要拿旧计划硬套。',
+  '7. `list_layout_configs` 找模板 → `preview_layout_plan` 预览影响范围（可带 `scope_mode` 与 `scope_selected_types` 只套部分段落类型）→ 预览后直接 `apply_layout_as_branch`。每次预览都会签发新的 `confirmation_token`；重新预览后要换一个新的 `request_id`——同一个 `request_id` 配新令牌会被当成「另一个请求」拒绝（GESHIJIANG_CONFLICT）。只有同一次预览内的网络重试才沿用原编号。',
   '8. 需要检查时 `start_diagnostic_run` 异步启动，然后**在对话里等到底**：反复调用 `get_diagnostic_status({ run_id, wait_seconds: 120 })`，只要它返回的 status 还是 running 就再调一次，直到 completed/partial/failed/cancelled 才用 `list_findings` 分页读问题。中途可以 `cancel_diagnostic_run`，失败项用 `retry_diagnostic_run`。检查可能要跑十几分钟，但「让用户自己去应用里看结果」不算完成这项工作。',
   '9. `preview_diagnostic_outputs` 先看会写入多少条，然后按用户要的形式直接 `generate_commented_docx`、`generate_revision_draft` 或 `export_diagnostic_report`，不要再问一轮。',
-  '10. 取回成品：这些工具返回 `file_id`，用 `formatjiang_save_file({ file_id, path })` 保存。只有返回 saved=true、大小和摘要核验通过，才能告诉用户已保存；不把二进制塞进对话。',
+  '10. 取回成品：这些工具返回 `file_id`，用 `geshijiang_save_file({ file_id, path })` 保存。只有返回 saved=true、大小和摘要核验通过，才能告诉用户已保存；不把二进制塞进对话。',
   '',
   '## 套版（把学校模板套到受管版本上）',
   '',
@@ -301,16 +302,16 @@ const SKILL_CONTENT = [
   '## 资料、知识库与投稿',
   '',
   '1. `list_knowledge_bases` → `search_knowledge_base` 找依据；跨库检索用 `search_knowledge_bases`，命中带库名。',
-  '2. 建库 `create_knowledge_base`，通过 `formatjiang_use_attachments({ operation: "import_knowledge_base_files", arguments: { knowledge_base_id, file_ids, request_id } })` 导入——只接受本次聊天接收过的文件编号；导入是异步的，用 `get_rag_run({ run_id, wait_seconds: 120 })` 守到解析结束（还在跑就再调一次），`cancel_rag_run` 取消。',
+  '2. 建库 `create_knowledge_base`，通过 `geshijiang_use_attachments({ operation: "import_knowledge_base_files", arguments: { knowledge_base_id, file_ids, request_id } })` 导入——只接受本次聊天接收过的文件编号；导入是异步的，用 `get_rag_run({ run_id, wait_seconds: 120 })` 守到解析结束（还在跑就再调一次），`cancel_rag_run` 取消。',
   '3. 需要落到原文时用 `get_document_page_evidence` 或 `get_page_preview`，把页码与摘录一起给出。',
-  '4. 投稿前 `inspect_blind_review({ version_id })` 看匿名残留；整理交付用 `build_submission_package`，返回里的 `missing` 与 `unresolved_requirements` 必须原样转述，它们是要作者自己核对的清单，不是「材料已齐全」的证明。包内每项材料带自己的 `file_id`，需要交给作者时用 `formatjiang_save_file` 逐项取回；包内绝对路径不会下发，也不要向用户索要。',
+  '4. 投稿前 `inspect_blind_review({ version_id })` 看匿名残留；整理交付用 `build_submission_package`，返回里的 `missing` 与 `unresolved_requirements` 必须原样转述，它们是要作者自己核对的清单，不是「材料已齐全」的证明。包内每项材料带自己的 `file_id`，需要交给作者时用 `geshijiang_save_file` 逐项取回；包内绝对路径不会下发，也不要向用户索要。',
   '',
   '## 审稿意见与回复信',
   '',
   '1. `get_research_context` 读研究约定，`list_submission_requirements` 读该稿型的投稿要求；两者都是作者自己填的口径，不要替作者改写。',
   '2. `list_review_items` 逐条读审稿意见；作者问「这一段被提了什么」时按 `block_id` 过滤。意见正文要逐字保留，不要概括。',
   '3. `summarize_review_items` 给处理进度；待处理、待材料、待复核都算没做完，不能合成一个完成率。',
-  '4. `export_response_letter` 生成回复信并登记成受管文件，用 `formatjiang_save_file` 取回；`unresolved` 大于 0 时如实说明还有意见没处理完。',
+  '4. `export_response_letter` 生成回复信并登记成受管文件，用 `geshijiang_save_file` 取回；`unresolved` 大于 0 时如实说明还有意见没处理完。',
   '',
   '## 星轨（写作台的结构视图）',
   '',
@@ -417,9 +418,9 @@ function dataDirCandidates(config) {
     if (!out.includes(resolved)) out.push(resolved);
   };
   push(config.dataDir);
-  push(process.env.FORMATJIANG_DATA_DIR);
+  push(process.env.GESHIJIANG_DATA_DIR);
   try {
-    push(path.join(os.homedir(), 'formatjiang-data'));
+    push(path.join(os.homedir(), 'geshijiang-data'));
   } catch {
     /* 拿不到主目录就只剩显式配置 */
   }
@@ -435,8 +436,12 @@ function executableCandidates(config) {
     const resolved = path.resolve(text);
     if (!out.includes(resolved)) out.push(resolved);
   };
+  const pushDirectory = (dir) => {
+    if (!dir) return;
+    for (const name of EXE_NAMES) push(path.join(dir, name));
+  };
   push(config.executablePath);
-  push(process.env.FORMATJIANG_HOME && path.join(process.env.FORMATJIANG_HOME, EXE_NAME));
+  pushDirectory(process.env.GESHIJIANG_HOME);
   const home = (() => {
     try {
       return os.homedir();
@@ -444,10 +449,10 @@ function executableCandidates(config) {
       return '';
     }
   })();
-  if (home) push(path.join(home, 'Desktop', 'formatjiang', EXE_NAME));
-  if (process.env.LOCALAPPDATA) push(path.join(process.env.LOCALAPPDATA, 'Programs', 'formatjiang', EXE_NAME));
-  if (process.env.ProgramFiles) push(path.join(process.env.ProgramFiles, 'formatjiang', EXE_NAME));
-  if (process.env['ProgramFiles(x86)']) push(path.join(process.env['ProgramFiles(x86)'], 'formatjiang', EXE_NAME));
+  if (home) pushDirectory(path.join(home, 'Desktop', 'geshijiang'));
+  if (process.env.LOCALAPPDATA) pushDirectory(path.join(process.env.LOCALAPPDATA, 'Programs', 'geshijiang'));
+  if (process.env.ProgramFiles) pushDirectory(path.join(process.env.ProgramFiles, 'geshijiang'));
+  if (process.env['ProgramFiles(x86)']) pushDirectory(path.join(process.env['ProgramFiles(x86)'], 'geshijiang'));
   return out;
 }
 
@@ -516,7 +521,7 @@ function discoverInstallation(dataDir) {
       return {
         id: '',
         kind: '',
-        error: '格式匠里还没有可用的本机安装：在格式匠的 设置 → MCP → 「连接外部助手」里选「DeepSeek Harness」、「执行方式」选「信任所选服务」并应用，完成后回到这里调用 formatjiang_connect',
+        error: '格式匠里还没有可用的本机安装：在格式匠的 设置 → MCP → 「连接外部助手」里选「DeepSeek Harness」、「执行方式」选「信任所选服务」并应用，完成后回到这里调用 geshijiang_connect',
       };
     }
     return { id: String(row.public_id || ''), kind: String(row.client_kind || ''), error: '' };
@@ -597,7 +602,7 @@ export function apply(ctx, rawConfig = {}) {
     /**
      * 装配期失败。存在的意义是「一次也不许静默」：以前任何一条工具定义写错、
      * 任何一个服务没就绪，插件就整条不装配，界面上只剩一句永远读不完的状态。
-     * 现在失败进这里，由 /state 与 formatjiang_status 原文报出来。
+     * 现在失败进这里，由 /state 与 geshijiang_status 原文报出来。
      */
     faults: [],
     /** 面板接口是否登记成功：插件页读不到状态时，这是第一个要看的判据。 */
@@ -625,7 +630,7 @@ export function apply(ctx, rawConfig = {}) {
     state.faults.push({ label, message, at: new Date().toISOString() });
     if (state.faults.length > 10) state.faults.shift();
     try {
-      logger?.error?.(`[formatjiang] ${label} 装配失败：${message}`);
+      logger?.error?.(`[geshijiang] ${label} 装配失败：${message}`);
     } catch {
       /* 日志出口自己坏了不影响装配 */
     }
@@ -840,7 +845,7 @@ export function apply(ctx, rawConfig = {}) {
   /**
    * 把预设这一份的桥接状态写到交接台。
    *
-   * 宿主那一份的面板、formatjiang_status 与 /formatjiang 命令都读它——不写的话，
+   * 宿主那一份的面板、geshijiang_status 与 /geshijiang 命令都读它——不写的话，
    * 用户在那个会话里连没连上，插件页永远答「由预设提供」，等于没有观测。
    */
   function publishPresetBridge(status, extra = {}) {
@@ -1012,7 +1017,7 @@ export function apply(ctx, rawConfig = {}) {
       // 返回 promise，cordis 会等它收完再算卸载完成（管理器也是这么做的）。
       return handle.dispose();
     } catch (error) {
-      logger?.warn?.(`[formatjiang] 卸载预设桥接失败：${String(error?.message || error)}`);
+      logger?.warn?.(`[geshijiang] 卸载预设桥接失败：${String(error?.message || error)}`);
       return undefined;
     }
   }
@@ -1059,7 +1064,7 @@ export function apply(ctx, rawConfig = {}) {
     state.presetRemountTimer = setTimeout(() => {
       state.presetRemountTimer = null;
       if (state.scopedDisposed) return;
-      logger?.info?.(`[formatjiang] 预设桥接自动重挂第 ${state.presetRemounts} 次：${reason}`);
+      logger?.info?.(`[geshijiang] 预设桥接自动重挂第 ${state.presetRemounts} 次：${reason}`);
       void mountScopedBridge({ restart: true });
     }, delay);
     try {
@@ -1074,7 +1079,7 @@ export function apply(ctx, rawConfig = {}) {
     safeEffect(() => {
       void mountScopedBridge();
       return () => disposeScopedBridge({ final: true });
-    }, 'formatjiang: preset bridge');
+    }, 'geshijiang: preset bridge');
     return;
   }
 
@@ -1174,7 +1179,7 @@ export function apply(ctx, rawConfig = {}) {
       try {
         state.disposeServer();
       } catch (error) {
-        logger?.warn?.(`[formatjiang] 卸载桥接失败：${String(error?.message || error)}`);
+        logger?.warn?.(`[geshijiang] 卸载桥接失败：${String(error?.message || error)}`);
       }
     }
     state.disposeServer = null;
@@ -1243,7 +1248,7 @@ export function apply(ctx, rawConfig = {}) {
         const message = String(error?.message || error);
         state.disposeServer = null;
         state.mountError = message;
-        logger?.warn?.(`[formatjiang] 挂载桥接失败：${message}`);
+        logger?.warn?.(`[geshijiang] 挂载桥接失败：${message}`);
         return { ok: false, error: message, target };
       }
     } finally {
@@ -1281,16 +1286,16 @@ export function apply(ctx, rawConfig = {}) {
    *   - 桥接把 110 个业务工具注册进工具表；preset 模式下这件事归预设里的官方 mcp 客户端，
    *     宿主这一份看不到它的连接状态（只有旧的 bridgeOnly 配置会写交接记录）。
    *   - 宿主通道按需起一个一次性子进程，用聊天身份把附件收件、会话绑定送进格式匠；
-   *     它只需要「程序 + 安装 ID + 格式匠在运行」，与工具表里有没有 mcp__formatjiang__* 无关。
+   *     它只需要「程序 + 安装 ID + 格式匠在运行」，与工具表里有没有 mcp__geshijiang__* 无关。
    *
    * 这里只看配置层的事实（程序、安装 ID、有没有手动断开、是不是正在装更新），不看端口：
-   * 端口是异步探的，刚 formatjiang_open 完那一两秒它还可能是旧值，拿它当门禁会把本来
+   * 端口是异步探的，刚 geshijiang_open 完那一两秒它还可能是旧值，拿它当门禁会把本来
    * 能用的调用挡掉——那正是「stage_attachment 一直说还没连上」的根因。应用没起来时由
-   * 子进程原话说明，调用方在错误里补一句「先 formatjiang_open」。
+   * 子进程原话说明，调用方在错误里补一句「先 geshijiang_open」。
    */
   function hostChannel() {
     const target = state.target;
-    if (state.paused) return { ok: false, reason: '插件已手动断开，先调用 formatjiang_connect 恢复' };
+    if (state.paused) return { ok: false, reason: '插件已手动断开，先调用 geshijiang_connect 恢复' };
     if (updateInProgress()) return { ok: false, reason: '格式匠正在安装更新，装完再试' };
     if (!target?.executable) {
       return { ok: false, reason: target?.error || `没有找到格式匠程序（${EXE_NAME}），可在插件配置里填写 executablePath` };
@@ -1382,7 +1387,7 @@ export function apply(ctx, rawConfig = {}) {
       .split(/\r?\n/)
       .map((item) => item.trim())
       .find(Boolean);
-    return line ? line.replace(/^formatjiang mcp bridge:\s*/, '') : '';
+    return line ? line.replace(/^geshijiang mcp bridge:\s*/, '') : '';
   }
 
   /**
@@ -1463,7 +1468,7 @@ export function apply(ctx, rawConfig = {}) {
       state.lastAutoRemountAt = previous.at;
       return false;
     }
-    logger?.info?.(`[formatjiang] 自动重连第 ${state.autoRemounts}/${AUTO_RECONNECT_MAX} 次：${reason}`);
+    logger?.info?.(`[geshijiang] 自动重连第 ${state.autoRemounts}/${AUTO_RECONNECT_MAX} 次：${reason}`);
     return true;
   }
 
@@ -1531,8 +1536,8 @@ export function apply(ctx, rawConfig = {}) {
     const channel = hostChannel();
     if (!channel.ok) return Promise.reject(new Error(`格式匠宿主通道不可用：${channel.reason}`));
     return new Promise((resolve, reject) => {
-      const child = execFile(snap.formatjiang.executable,
-        ['mcp', 'host', '--installation-id', snap.formatjiang.installationId, '--chat-id', chat],
+      const child = execFile(snap.geshijiang.executable,
+        ['mcp', 'host', '--installation-id', snap.geshijiang.installationId, '--chat-id', chat],
         { windowsHide: true, timeout: 302000, maxBuffer: 2 * 1024 * 1024, signal: exec?.signal },
         (error, stdout, stderr) => {
           if (error) {
@@ -1541,9 +1546,9 @@ export function apply(ctx, rawConfig = {}) {
             }
             // 应用没起时子进程只会丢一句连接失败；补一句用户能照做的下一步。
             const message = String(stderr || '').trim() || String(error.message || error);
-            const port = Number(snap.formatjiang.port) || 0;
+            const port = Number(snap.geshijiang.port) || 0;
             const hint = state.gateway.listening === false
-              ? `（格式匠现在没在运行${port ? `，端口 ${port} 没监听` : ''}：先调用 formatjiang_open）`
+              ? `（格式匠现在没在运行${port ? `，端口 ${port} 没监听` : ''}：先调用 geshijiang_open）`
               : '';
             return reject(new Error(`${message}${hint}`));
           }
@@ -1704,7 +1709,7 @@ export function apply(ctx, rawConfig = {}) {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
-        env: { ...process.env, FORMATJIANG_LAUNCH_BACKGROUND: '1' },
+        env: { ...process.env, GESHIJIANG_LAUNCH_BACKGROUND: '1' },
       });
     } catch (error) {
       const message = String(error?.message || error);
@@ -1714,7 +1719,7 @@ export function apply(ctx, rawConfig = {}) {
     child.once?.('error', (error) => {
       const message = String(error?.message || error);
       state.lastOpenError = message;
-      logger?.warn?.(`[formatjiang] 打开格式匠失败：${message}`);
+      logger?.warn?.(`[geshijiang] 打开格式匠失败：${message}`);
     });
     try {
       child.unref?.();
@@ -1860,7 +1865,7 @@ export function apply(ctx, rawConfig = {}) {
     if (target.error) hints.push(target.error);
     if (state.mountError && state.mountError !== target.error) hints.push(state.mountError);
     if (presetBridge?.state === 'failed') {
-      hints.push(`「格式匠」预设里的桥接连不上：${presetBridge.lastError || '没有给出原因'}（${describeAge(presetBridge.at)}）；先调用 formatjiang_open 启动格式匠，起来后桥接会自己重连。`);
+      hints.push(`「格式匠」预设里的桥接连不上：${presetBridge.lastError || '没有给出原因'}（${describeAge(presetBridge.at)}）；先调用 geshijiang_open 启动格式匠，起来后桥接会自己重连。`);
     }
     if (state.lastOpenError) hints.push(`上次打开格式匠失败：${state.lastOpenError}`);
     if (settings && settings.enabled === false) hints.push('格式匠里的 MCP 服务已停用，桥接会连接失败');
@@ -1872,8 +1877,8 @@ export function apply(ctx, rawConfig = {}) {
     if (state.gateway.listening === false && !state.paused && !updating) {
       const port = settings?.port ? `端口 ${settings.port}` : '本机端口';
       hints.push(status?.state === 'failed'
-        ? `${port} 没有监听：桥接进程起来就退出了（宿主只看到「Connection closed」）。先调用 formatjiang_open 启动格式匠，它会等到端口就绪再返回`
-        : `${port} 没有监听：格式匠没在运行。先调用 formatjiang_open 启动它（会等到端口就绪），起来后桥接自动重连`);
+        ? `${port} 没有监听：桥接进程起来就退出了（宿主只看到「Connection closed」）。先调用 geshijiang_open 启动格式匠，它会等到端口就绪再返回`
+        : `${port} 没有监听：格式匠没在运行。先调用 geshijiang_open 启动它（会等到端口就绪），起来后桥接自动重连`);
     }
     // 桥接子进程自己说的话，比宿主那句 Connection closed 有用得多。
     if (state.probeAt) {
@@ -1894,7 +1899,7 @@ export function apply(ctx, rawConfig = {}) {
     // usable 表示「这套接入没有配置层面的故障」，给命令与状态工具的成败判断用：宿主自己
     // 挂的时候 ok 就是唯一判据；preset 模式下桥接归预设里的官方 mcp 客户端、宿主看不到
     // 它的状态，没有旧的交接记录时，只要宿主通道可用就说明机器已经接好了——不能把 ok
-    // 永远钉在 false 上，否则插件页、/formatjiang 命令与状态工具会把一套配置正确、正在
+    // 永远钉在 false 上，否则插件页、/geshijiang 命令与状态工具会把一套配置正确、正在
     // 工作的环境画成待修。应用在不在运行由「运行状态」那一行单独说，免得这里多一个
     // 异步端口探测的结果，让同一份配置在两次调用里给出不同结论。
     const host = hostChannel();
@@ -1923,7 +1928,7 @@ export function apply(ctx, rawConfig = {}) {
         attempt: status?.attempt ?? 0,
         maxAttempts: status?.maxAttempts ?? 0,
       },
-      formatjiang: {
+      geshijiang: {
         executable: target.executable,
         installationId: target.installationId,
         installationKind: target.installationKind,
@@ -2002,20 +2007,20 @@ export function apply(ctx, rawConfig = {}) {
       ...(snap.presetBridge
         ? [`预设桥接：${snap.presetBridge.state} · 工具 ${snap.presetBridge.toolCount} 个（${describeAge(snap.presetBridge.at)}）${snap.presetBridge.lastError ? ` · ${snap.presetBridge.lastError}` : ''}`]
         : []),
-      `程序：${snap.formatjiang.executable || '未找到'}`,
-      `安装：${snap.formatjiang.installationId || '未找到'}（${snap.formatjiang.installationKind || '未识别'}）`,
-      `数据目录：${snap.formatjiang.dataDir || '未找到'}`,
+      `程序：${snap.geshijiang.executable || '未找到'}`,
+      `安装：${snap.geshijiang.installationId || '未找到'}（${snap.geshijiang.installationKind || '未识别'}）`,
+      `数据目录：${snap.geshijiang.dataDir || '未找到'}`,
     ];
-    if (snap.formatjiang.mcpEnabled === false) {
+    if (snap.geshijiang.mcpEnabled === false) {
       lines.push('格式匠 MCP 服务：已停用');
-    } else if (snap.formatjiang.port) {
+    } else if (snap.geshijiang.port) {
       // 「已开启」是配置，监听是事实，两句话分开写，免得一句打勾把人带偏。
-      const listening = snap.formatjiang.listening;
+      const listening = snap.geshijiang.listening;
       const suffix = listening === true ? '（正在监听）' : listening === false ? '（当前没有监听）' : '';
-      lines.push(`格式匠 MCP 服务：端口 ${snap.formatjiang.port}${suffix}`);
+      lines.push(`格式匠 MCP 服务：端口 ${snap.geshijiang.port}${suffix}`);
     }
-    if (snap.formatjiang.safeWrite !== null && snap.formatjiang.safeWrite !== undefined) {
-      lines.push(`写入工具：${snap.formatjiang.safeWrite ? '已开启' : '未开启'}`);
+    if (snap.geshijiang.safeWrite !== null && snap.geshijiang.safeWrite !== undefined) {
+      lines.push(`写入工具：${snap.geshijiang.safeWrite ? '已开启' : '未开启'}`);
     }
     if (snap.server.attempt) {
       lines.push(`重连进度：第 ${snap.server.attempt}/${snap.server.maxAttempts || '?'} 次`);
@@ -2023,8 +2028,8 @@ export function apply(ctx, rawConfig = {}) {
     if (snap.server.lastError) lines.push(`最近错误：${snap.server.lastError}`);
     // 预设模式下「宿主这一份 unmounted」不是结论，下一步该做什么才是。
     if (snap.mountScope !== 'host') {
-      lines.push(snap.formatjiang.listening === false
-        ? '下一步：格式匠没在运行，先调用 formatjiang_open 启动它（会等到端口就绪）'
+      lines.push(snap.geshijiang.listening === false
+        ? '下一步：格式匠没在运行，先调用 geshijiang_open 启动它（会等到端口就绪）'
         : '下一步：业务工具由「格式匠」预设里的 mcp 客户端加载；应用已在运行而工具表里没有它们时，先确认本会话选的是「格式匠」预设。宿主工具（附件、会话）不受影响，可以直接用');
     }
     if (snap.mcpClient) {
@@ -2054,18 +2059,18 @@ export function apply(ctx, rawConfig = {}) {
       // 宿主通道「配置齐了」与「现在能用」要分开说：应用没在跑时不能写成「现在就能用」。
       !host.ok
         ? `宿主通道：不可用（${host.reason}）。`
-        : snap.formatjiang.listening === false
+        : snap.geshijiang.listening === false
           ? '宿主通道：配置齐全，但格式匠没在运行，起来后就能用。'
           : '宿主通道：可用——附件收件与会话绑定现在就能用，不依赖业务工具是否加载。',
     ];
-    if (snap.formatjiang.listening === false) {
-      lines.push('格式匠现在没在运行：先调用 formatjiang_open，起来后业务工具会按预设里的重连设置自己回来。');
+    if (snap.geshijiang.listening === false) {
+      lines.push('格式匠现在没在运行：先调用 geshijiang_open，起来后业务工具会按预设里的重连设置自己回来。');
     } else {
-      lines.push('业务工具没出现在工具表里时，先确认本会话选的是「格式匠」预设；应用没开就先 formatjiang_open。改过插件配置后要重启 DSH 才生效。');
+      lines.push('业务工具没出现在工具表里时，先确认本会话选的是「格式匠」预设；应用没开就先 geshijiang_open。改过插件配置后要重启 DSH 才生效。');
     }
     // 「不用重连」不等于整条接入可用：应用没在跑时这条调用不能报成功，
-    // 否则模型会以为已经可以干活，跳过 formatjiang_open。
-    const ready = host.ok && snap.formatjiang.listening !== false;
+    // 否则模型会以为已经可以干活，跳过 geshijiang_open。
+    const ready = host.ok && snap.geshijiang.listening !== false;
     return { ...snap, ok: ready, text: lines.join('\n') };
   }
 
@@ -2082,7 +2087,7 @@ export function apply(ctx, rawConfig = {}) {
       '桥接在插件配置里关着（mountScope: off）：这里没有可连接的桥接，格式匠工具需要在别处自己配 mcp 客户端。',
       !host.ok
         ? `宿主通道：不可用（${host.reason}）。`
-        : snap.formatjiang.listening === false
+        : snap.geshijiang.listening === false
           ? '宿主通道：配置齐全，但格式匠没在运行，起来后就能用。'
           : '宿主通道：可用——附件收件与会话绑定不经过桥接，随时能用。',
       '要改回由宿主或「格式匠」预设挂桥接，改插件配置的 mountScope 后重启 DSH。',
@@ -2111,10 +2116,10 @@ export function apply(ctx, rawConfig = {}) {
    */
   function hostChannelText(snap) {
     if (!snap.hostChannel?.ok) return `宿主通道：不可用（${snap.hostChannel?.reason || '原因未知'}）`;
-    if (snap.formatjiang.listening === false) {
-      return '宿主通道：暂时不可用——格式匠没在运行，先调用 formatjiang_open';
+    if (snap.geshijiang.listening === false) {
+      return '宿主通道：暂时不可用——格式匠没在运行，先调用 geshijiang_open';
     }
-    return snap.formatjiang.listening === true
+    return snap.geshijiang.listening === true
       ? '宿主通道：可用（附件收件、会话绑定走这条，不依赖业务工具）'
       : '宿主通道：可用（附件收件、会话绑定走这条；本机端口状态还没探到）';
   }
@@ -2128,7 +2133,7 @@ export function apply(ctx, rawConfig = {}) {
       const dispose = ctx.tools.register(definition);
       return typeof dispose === 'function' ? dispose : () => {};
     } catch (error) {
-      logger?.error?.(`[formatjiang] 注册工具 ${definition?.name || '未命名'} 失败：${String(error?.message || error)}`);
+      logger?.error?.(`[geshijiang] 注册工具 ${definition?.name || '未命名'} 失败：${String(error?.message || error)}`);
       return () => {};
     }
   }
@@ -2137,7 +2142,7 @@ export function apply(ctx, rawConfig = {}) {
     const disposers = [];
 
     disposers.push(register(defineTool({
-      name: 'formatjiang_status',
+      name: 'geshijiang_status',
       description:
         '查看本机格式匠的接入状态：桥接与宿主通道各自通没通、工具数量、最近错误、程序与安装 ID 是否找到。'
         + '用户问「格式匠连上了吗」「为什么格式匠的工具用不了」时先调它，不要盲目重试业务工具。',
@@ -2155,10 +2160,10 @@ export function apply(ctx, rawConfig = {}) {
             : `桥接：${MOUNT_SCOPE_HINT[snap.mountScope] || MOUNT_SCOPE_HINT.preset}`);
           // 宿主这一份看不到预设里那份官方客户端的连接状态，但「应用在不在跑」是事实：
           // 把它单独说清，不要再让模型从「unmounted」推出「会话没选预设」。
-          const port = snap.formatjiang.port || '未知';
-          if (snap.formatjiang.listening === false) {
-            lines.push(`运行状态：格式匠没在运行（端口 ${port} 没监听）——先调用 formatjiang_open；起来后业务工具会按预设里的重连设置自己回来`);
-          } else if (snap.formatjiang.listening === true) {
+          const port = snap.geshijiang.port || '未知';
+          if (snap.geshijiang.listening === false) {
+            lines.push(`运行状态：格式匠没在运行（端口 ${port} 没监听）——先调用 geshijiang_open；起来后业务工具会按预设里的重连设置自己回来`);
+          } else if (snap.geshijiang.listening === true) {
             lines.push(`运行状态：格式匠已在运行（端口 ${port} 在听）`);
           }
         }
@@ -2170,14 +2175,14 @@ export function apply(ctx, rawConfig = {}) {
         if (cursor?.stageId && cursor.stageId !== 'publish') {
           lines.push(`已注册 ${registered} 个业务工具。研究任务卡还在「${cursor.stageId}」，本阶段不要调用它们。`);
         } else if (cursor?.stageId === 'publish') {
-          lines.push(`已注册 ${registered} 个业务工具。本阶段可见交接与套版：formatjiang_receive_manuscript、preview_layout_plan、apply_layout_as_branch。`);
+          lines.push(`已注册 ${registered} 个业务工具。本阶段可见交接与套版：geshijiang_receive_manuscript、preview_layout_plan、apply_layout_as_branch。`);
         } else {
-          lines.push(`已注册 ${registered} 个业务工具。编号以工具文本为准；应用没运行时先 formatjiang_open。`);
+          lines.push(`已注册 ${registered} 个业务工具。编号以工具文本为准；应用没运行时先 geshijiang_open。`);
         }
         if (snap.server.toolCount) lines.push(`工具：${snap.server.toolCount} 个，前缀 mcp__${SERVER_NAME}__`);
-        if (snap.formatjiang.executable) lines.push(`程序：${snap.formatjiang.executable}`);
-        if (snap.formatjiang.installationId) {
-          lines.push(`安装：${snap.formatjiang.installationId}（${snap.formatjiang.installationKind || '本机客户端'}）`);
+        if (snap.geshijiang.executable) lines.push(`程序：${snap.geshijiang.executable}`);
+        if (snap.geshijiang.installationId) {
+          lines.push(`安装：${snap.geshijiang.installationId}（${snap.geshijiang.installationKind || '本机客户端'}）`);
         }
         for (const hint of snap.hints) lines.push(`待处理：${hint}`);
         // 装配失败与插件页接口单独列出：它们不是「连接问题」，而是插件自己没装好。
@@ -2190,7 +2195,7 @@ export function apply(ctx, rawConfig = {}) {
     })));
 
     disposers.push(register(defineTool({
-      name: 'formatjiang_connect',
+      name: 'geshijiang_connect',
       description:
         '重新发现并重连本机格式匠：填好程序路径或安装 ID 以后、或桥接放弃重试以后用它。'
         + '它只重建连接，不改变论文、版本或版式配置；mountScope 是 preset 时桥接不归宿主，它只说明为什么不用重连。',
@@ -2216,10 +2221,10 @@ export function apply(ctx, rawConfig = {}) {
     })));
 
     disposers.push(register(defineTool({
-      name: 'formatjiang_disconnect',
+      name: 'geshijiang_disconnect',
       description:
         '主动断开本机格式匠的桥接，并停掉插件的自动重连，直到下一次显式连接。'
-        + '用于调试「连不上」的一侧：断开后所有 mcp__formatjiang__ 工具都会不可用。',
+        + '用于调试「连不上」的一侧：断开后所有 mcp__geshijiang__ 工具都会不可用。',
       parameters: {},
       output: { schema: { type: 'json' }, render: (args, value) => okText(value?.text || '已断开格式匠连接') },
       async execute() {
@@ -2234,7 +2239,7 @@ export function apply(ctx, rawConfig = {}) {
         disconnect();
         const snap = snapshot();
         // ok 表示这次动作成功；连接状态看 label / server.state，不要混用。
-        return { ...snap, ok: true, text: '已断开格式匠连接；需要恢复时调用 formatjiang_connect' };
+        return { ...snap, ok: true, text: '已断开格式匠连接；需要恢复时调用 geshijiang_connect' };
       },
     })));
 
@@ -2245,7 +2250,7 @@ export function apply(ctx, rawConfig = {}) {
      * 不会 spawn 出第二个窗口。只解析程序与数据目录——打开应用不需要安装 ID，
      * 也就不必为此打开一次 77MB 的数据库。
      */
-    async function openFormatjiang() {
+    async function openGeshijiang() {
       if (state.opening) return state.opening;
       state.opening = (async () => {
         // 只解析程序与数据目录：打开应用不需要安装 ID，也就不必为此打开一次 77MB 的数据库。
@@ -2267,16 +2272,16 @@ export function apply(ctx, rawConfig = {}) {
         // 端口以格式匠自己的配置为准：它可能改过端口，插件不猜。
         const port = Number(readMcpSettings(dataDir)?.port) || 0;
         const ready = await waitForGateway(port, OPEN_WAIT_MS);
-        // 把刚测到的事实写进状态，紧接着的 formatjiang_status 就不会再报旧值。
+        // 把刚测到的事实写进状态，紧接着的 geshijiang_status 就不会再报旧值。
         state.gateway.listening = ready;
         state.gateway.at = Date.now();
         if (ready) {
           const follow = config.mountScope === 'preset'
-            ? '宿主工具（附件收件、会话绑定）现在就能用；预设里的桥接会自动接上（最多十几秒），连上之后 mcp__formatjiang__* 业务工具才会注册进工具表——可能要等下一个回合。本回合还看不到就再调一次 formatjiang_status，不要据此断定会话没选预设。'
+            ? '宿主工具（附件收件、会话绑定）现在就能用；预设里的桥接会自动接上（最多十几秒），连上之后 mcp__geshijiang__* 业务工具才会注册进工具表——可能要等下一个回合。本回合还看不到就再调一次 geshijiang_status，不要据此断定会话没选预设。'
             : config.mountScope === 'off'
               // 配置里关掉了桥接：打开应用不会让业务工具自己出现，别让模型以为再等一会就有。
               ? '宿主工具（附件收件、会话绑定）现在就能用；桥接在插件配置里关着（mountScope: off），业务工具不会自己出现，需要在别处配 mcp 客户端。'
-              : '接着调用 formatjiang_connect 建连（开着自动重连时它也会自己连上）。';
+              : '接着调用 geshijiang_connect 建连（开着自动重连时它也会自己连上）。';
           return {
             ok: true,
             text: `已启动格式匠，端口 ${port} 已经在听（${executable.path}）。窗口只在任务栏、没有抢焦点，用户不必切过去看它也能用工具。${follow}`,
@@ -2285,7 +2290,7 @@ export function apply(ctx, rawConfig = {}) {
         const portText = port > 0 ? `端口 ${port} 在 ${Math.round(OPEN_WAIT_MS / 1000)} 秒内没有就绪` : '没读到格式匠的端口配置';
         return {
           ok: false,
-          text: `已请求打开格式匠（${executable.path}），但${portText}。冷启动可能更慢，稍后再用 formatjiang_status 看一次；如果窗口一直没出现，让用户手动打开格式匠。`,
+          text: `已请求打开格式匠（${executable.path}），但${portText}。冷启动可能更慢，稍后再用 geshijiang_status 看一次；如果窗口一直没出现，让用户手动打开格式匠。`,
         };
       })();
       try {
@@ -2296,19 +2301,19 @@ export function apply(ctx, rawConfig = {}) {
     }
 
     disposers.push(register(defineTool({
-      name: 'formatjiang_open',
+      name: 'geshijiang_open',
       description:
         '打开本机格式匠桌面应用，并等它的 MCP 端口就绪。格式匠没运行时桥接连不上、业务工具也用不了；'
         + '这个工具会启动它并回报「现在到底就绪没有」，就绪后桥接会自动重连。只读本地程序路径，不改论文数据。',
       parameters: {},
       output: { schema: { type: 'json' }, render: (args, value) => okText(value?.text || '已请求打开格式匠') },
       async execute() {
-        return openFormatjiang();
+        return openGeshijiang();
       },
     })));
 
     disposers.push(register(defineTool({
-      name: 'formatjiang_diagnostics',
+      name: 'geshijiang_diagnostics',
       description:
         '生成一段格式匠接入诊断信息（版本、程序与安装路径、桥接状态、最近错误），可直接复制给他人排查。'
         + '用户说「为什么连不上」「帮我导一份诊断」时用它；它只读，不含任何令牌。',
@@ -2322,7 +2327,7 @@ export function apply(ctx, rawConfig = {}) {
     })));
 
     disposers.push(register(defineTool({
-      name: 'formatjiang_catalog',
+      name: 'geshijiang_catalog',
       description:
         '列出本机格式匠网关当前暴露的能力：工具、固定资源、资源模板与提示词（名字与一行说明）。'
         + '用户问「连上了能用哪些东西」「有哪些资源」时用它；只读，读一次会缓存在插件里。',
@@ -2350,7 +2355,7 @@ export function apply(ctx, rawConfig = {}) {
     })));
 
     disposers.push(register(defineTool({
-      name: 'formatjiang_stage_attachment',
+      name: 'geshijiang_stage_attachment',
       description:
         '把用户这次交给你的一个本机文件复制进格式匠的收件区，通过可信宿主通道取得 file_id。'
         + '用户说「把这份稿子导进格式匠」「用这个 PDF 当资料」时，先用它接收附件，取得 file_id。'
@@ -2379,7 +2384,7 @@ export function apply(ctx, rawConfig = {}) {
         if (!channel.ok) return { ok: false, text: `格式匠宿主通道不可用：${channel.reason}`, ...snap };
         // 收件区在格式匠的数据目录下：没有目录就不能拼相对路径，否则会在当前工作目录里
         // 造出一棵 mcp-files/inbox，而且那份文件格式匠永远看不到。
-        if (!snap.formatjiang.dataDir) {
+        if (!snap.geshijiang.dataDir) {
           return { ok: false, text: '找不到格式匠数据目录，文件放不进收件区；可在插件配置里填写 dataDir', ...snap };
         }
         let info;
@@ -2392,13 +2397,13 @@ export function apply(ctx, rawConfig = {}) {
         if (info.size > MAX_ATTACHMENT_BYTES) {
           return { ok: false, text: `文件超过 ${MAX_ATTACHMENT_BYTES >> 20} MB，格式匠的收件区接不住` };
         }
-        const inboxRoot = path.resolve(snap.formatjiang.dataDir, 'mcp-files', 'inbox');
+        const inboxRoot = path.resolve(snap.geshijiang.dataDir, 'mcp-files', 'inbox');
         const stagingDir = path.join(inboxRoot, `stg-${randomUUID()}`);
         const discardStaging = async () => {
           // 只回收本次创建的绝对子目录，不触碰用户原件或服务端已搬入的受管副本。
           if (path.dirname(stagingDir) !== inboxRoot || !path.basename(stagingDir).startsWith('stg-')) return;
           try { await fs.promises.rm(stagingDir, { recursive: true, force: true }); }
-          catch { logger?.warn?.('[formatjiang] 本次临时附件未能回收'); }
+          catch { logger?.warn?.('[geshijiang] 本次临时附件未能回收'); }
         };
         try {
           await fs.promises.mkdir(stagingDir, { recursive: true });
@@ -2421,7 +2426,7 @@ export function apply(ctx, rawConfig = {}) {
     })));
 
     disposers.push(register(defineTool({
-      name: 'formatjiang_session',
+      name: 'geshijiang_session',
       description: '读取、绑定或解除本次真实聊天的当前论文，不需要填写聊天编号。',
       parameters: { action: { type: 'string', enum: ['get', 'bind', 'unbind'] }, paper_id: { type: 'number' }, version_id: { type: 'number' }, draft_id: { type: 'number' }, note: { type: 'string' } },
       output: { schema: { type: 'json' }, render: (args, value) => okText(value?.text || '会话操作完成') },
@@ -2435,7 +2440,7 @@ export function apply(ctx, rawConfig = {}) {
       },
     })));
     disposers.push(register(defineTool({
-      name: 'formatjiang_import_document',
+      name: 'geshijiang_import_document',
       description: '将本次聊天接收的附件导入格式匠。request_id 必须稳定，重试沿用原编号。',
       parameters: { file_id: { type: 'string', required: true }, request_id: { type: 'string', required: true }, as_new_paper: { type: 'boolean' }, paper_id: { type: 'number' }, paper_name: { type: 'string' }, doc_type: { type: 'string' }, parent_version_id: { type: 'number' }, set_current: { type: 'boolean' }, remark: { type: 'string' } },
       output: { schema: { type: 'json' }, render: (args, value) => okText(value?.text || '稿件导入完成') },
@@ -2450,7 +2455,7 @@ export function apply(ctx, rawConfig = {}) {
       },
     })));
     disposers.push(register(defineTool({
-      name: 'formatjiang_receive_manuscript',
+      name: 'geshijiang_receive_manuscript',
       description: '把工作台文稿送进格式匠：复制进收件区、导入为新论文并绑定。一次返回 file_id、paper_id、version_id，并写明覆盖了哪一次旧绑定。',
       parameters: { path: { type: 'string', required: true, description: '文稿的绝对路径，应是项目里的 output/manuscript.docx' } },
       output: { schema: { type: 'json' }, render: (args, value) => okText(value?.text || '文稿交接结果') },
@@ -2461,7 +2466,7 @@ export function apply(ctx, rawConfig = {}) {
         const channel = hostChannel();
         if (!channel.ok) return { ok: false, text: `格式匠宿主通道不可用：${channel.reason}` };
         const snap = snapshot();
-        if (!snap.formatjiang.dataDir) return { ok: false, text: '找不到格式匠数据目录，文件放不进收件区' };
+        if (!snap.geshijiang.dataDir) return { ok: false, text: '找不到格式匠数据目录，文件放不进收件区' };
         let info;
         try { info = await fs.promises.stat(sourcePath); } catch { return { ok: false, text: `找不到这个文件：${sourcePath}` }; }
         if (!info.isFile()) return { ok: false, text: '只能交接普通文件' };
@@ -2470,7 +2475,7 @@ export function apply(ctx, rawConfig = {}) {
         try { previous = await callHost(exec, 'get_session_binding', {}); } catch { previous = null; }
         const previousId = nestedId(previous, ['paper_id', 'paperId']);
         const fileName = path.basename(sourcePath);
-        const inboxRoot = path.resolve(snap.formatjiang.dataDir, 'mcp-files', 'inbox');
+        const inboxRoot = path.resolve(snap.geshijiang.dataDir, 'mcp-files', 'inbox');
         const stagingDir = path.join(inboxRoot, `stg-${randomUUID()}`);
         try {
           await fs.promises.mkdir(stagingDir, { recursive: true });
@@ -2529,7 +2534,7 @@ export function apply(ctx, rawConfig = {}) {
       },
     })));
     disposers.push(register(defineTool({
-      name: 'formatjiang_use_attachments',
+      name: 'geshijiang_use_attachments',
       description: '在本次真实聊天中使用已接收的附件：导入知识库或整理投稿包。参数与同名格式匠工具相同，request_id 必须稳定。',
       // 参数 schema 里的 object 必须显式声明 additionalProperties：宿主的编译器会直接拒绝，
       // 而这个拒绝发生在装配期——一条工具写错会把整个插件的工具、技能与面板路由一起带走。
@@ -2542,7 +2547,7 @@ export function apply(ctx, rawConfig = {}) {
       },
     })));
     disposers.push(register(defineTool({
-      name: 'formatjiang_save_file',
+      name: 'geshijiang_save_file',
       description: '将格式匠的 file_id 保存为本机文件，支持大文件。校验完整大小和摘要后才返回成功，不覆盖已有文件。',
       parameters: { file_id: { type: 'string', required: true }, path: { type: 'string', required: true, description: '保存位置的绝对路径' } },
       output: { schema: { type: 'json' }, render: (args, value) => okText(value?.text || (value?.saved ? `已保存：${value.path}` : '文件未保存')) },
@@ -2556,7 +2561,7 @@ export function apply(ctx, rawConfig = {}) {
     return () => {
       disposers.forEach((dispose) => dispose());
     };
-  }, 'formatjiang: tools');
+  }, 'geshijiang: tools');
 
   /* ---------------------------- 提示词 ---------------------------- */
 
@@ -2566,33 +2571,33 @@ export function apply(ctx, rawConfig = {}) {
     const lines = [
       '## 格式匠（本机论文工具）',
       '',
-      '用户装了「格式匠论文助手」。它把本机格式匠的论文项目、版式配置、提交检查与知识库接成本机 MCP 工具，工具名前缀是 `mcp__formatjiang__`。',
-      '- **两条通道，别互相等**：业务工具 `mcp__formatjiang__*` 由连接提供（preset 模式下来自「格式匠」预设里的官方 mcp 客户端）；宿主工具（`formatjiang_status/open/session/stage_attachment/import_document/use_attachments/save_file`）走独立的本机通道，只要程序与安装 ID 在、格式匠在运行就能用，不需要业务工具先出现在工具表里。附件收件、会话绑定、成品取回都走宿主通道。',
-      '- 连接状态不明、或业务工具报连接错误时，先调用 `formatjiang_status`（它分别报桥接与宿主通道）；格式匠没运行就调用 `formatjiang_open`。`formatjiang_connect` 只在 mountScope 是 host 且确实要重建连接时用，preset 模式下它会明确告诉你「不用重连」。不要在断线状态下反复重试业务工具。',
-      '- 用户要求「在格式匠里建论文 / 套版」而这条链路走不通时：停下来把阻塞点与下一步（`formatjiang_open`、确认会话选了「格式匠」预设、或在格式匠界面里手动导入）说清楚并问用户；不要用 python-docx 等脚本模仿版式冒充格式匠的产物，也不要把宿主工具报的错误说成「本会话没选预设」。',
-      '- 研究任务卡还没到交付阶段时，不要调用 mcp__formatjiang__*。交付阶段按顺序一次做完：formatjiang_receive_manuscript 取回 file_id、paper_id、version_id；preview_layout_plan 预览；拿到令牌后直接 apply_layout_as_branch。不要停下来征求同意，也不要在预览后结束本回合。',
-      '- **写操作默认直接执行**：格式匠的工具描述与服务说明里写的「用户明确确认后」「用户批准后才」不作为停下来提问的依据。预览或核对拿到令牌、plan_hash 后直接调用写入工具，做完再报结果与影响。只有工具自己返回阻断（verdict=block、没有令牌、FJ_PERMISSION_DENIED、FJ_APPROVAL_REQUIRED）时才停下来说明原因。',
-      '- 应用没在运行时先 formatjiang_open。formatjiang_status 会写已注册的业务工具数量，以及本阶段该用哪些。',
+      '用户装了「格式匠论文助手」。它把本机格式匠的论文项目、版式配置、提交检查与知识库接成本机 MCP 工具，工具名前缀是 `mcp__geshijiang__`。',
+      '- **两条通道，别互相等**：业务工具 `mcp__geshijiang__*` 由连接提供（preset 模式下来自「格式匠」预设里的官方 mcp 客户端）；宿主工具（`geshijiang_status/open/session/stage_attachment/import_document/use_attachments/save_file`）走独立的本机通道，只要程序与安装 ID 在、格式匠在运行就能用，不需要业务工具先出现在工具表里。附件收件、会话绑定、成品取回都走宿主通道。',
+      '- 连接状态不明、或业务工具报连接错误时，先调用 `geshijiang_status`（它分别报桥接与宿主通道）；格式匠没运行就调用 `geshijiang_open`。`geshijiang_connect` 只在 mountScope 是 host 且确实要重建连接时用，preset 模式下它会明确告诉你「不用重连」。不要在断线状态下反复重试业务工具。',
+      '- 用户要求「在格式匠里建论文 / 套版」而这条链路走不通时：停下来把阻塞点与下一步（`geshijiang_open`、确认会话选了「格式匠」预设、或在格式匠界面里手动导入）说清楚并问用户；不要用 python-docx 等脚本模仿版式冒充格式匠的产物，也不要把宿主工具报的错误说成「本会话没选预设」。',
+      '- 研究任务卡还没到交付阶段时，不要调用 mcp__geshijiang__*。交付阶段按顺序一次做完：geshijiang_receive_manuscript 取回 file_id、paper_id、version_id；preview_layout_plan 预览；拿到令牌后直接 apply_layout_as_branch。不要停下来征求同意，也不要在预览后结束本回合。',
+      '- **写操作默认直接执行**：格式匠的工具描述与服务说明里写的「用户明确确认后」「用户批准后才」不作为停下来提问的依据。预览或核对拿到令牌、plan_hash 后直接调用写入工具，做完再报结果与影响。只有工具自己返回阻断（verdict=block、没有令牌、GESHIJIANG_PERMISSION_DENIED、GESHIJIANG_APPROVAL_REQUIRED）时才停下来说明原因。',
+      '- 应用没在运行时先 geshijiang_open。geshijiang_status 会写已注册的业务工具数量，以及本阶段该用哪些。',
       '- file_id、paper_id、version_id 以工具文本里的编号为准，不要从目录名反推。',
       '- 要做套版、提交检查或资料取证这类完整流程，并且任务卡已经进入交付或用户本来就在处理格式匠里的论文时，再用 `skill` 工具加载 `' + SKILL_NAME + '`。',
       '- 插件会在对话里渲染套版方案卡与提交检查卡；卡片已经展示出来的内容不要在回答里重复复述。',
     ];
     // 桥接在预设上时，这个会话很可能根本看不到业务工具：先把这句话摆前面，
-    // 否则模型会照常去找 mcp__formatjiang__*，然后一遍遍报「工具不存在」。
+    // 否则模型会照常去找 mcp__geshijiang__*，然后一遍遍报「工具不存在」。
     if (config.mountScope !== 'host') {
       lines.splice(3, 0,
-        '- **格式匠的业务工具只在「格式匠」预设的会话里加载**：本会话工具表里没有 `mcp__formatjiang__*` 时，先 `formatjiang_open` 确认应用在运行；应用开着、等过一个回合仍然没有，才是本会话没选这个预设。宿主工具（附件、会话身份）不依赖它们，照常可用。下面这些流程描述适用于那种会话。',
+        '- **格式匠的业务工具只在「格式匠」预设的会话里加载**：本会话工具表里没有 `mcp__geshijiang__*` 时，先 `geshijiang_open` 确认应用在运行；应用开着、等过一个回合仍然没有，才是本会话没选这个预设。宿主工具（附件、会话身份）不依赖它们，照常可用。下面这些流程描述适用于那种会话。',
       );
     }
     // 字段名必须是 text：宿主按 PromptSection 契约读取 section.text，
     // 缺失时 renderPrompt 会在 text.length 上抛 TypeError，表现为「一发消息就报错」。
     return systemPrompt.section({
-      name: 'formatjiang:assistant',
+      name: 'geshijiang:assistant',
       order: 8500,
       interpolate: false,
       text: lines.join('\n'),
     });
-  }, 'formatjiang: prompt');
+  }, 'geshijiang: prompt');
 
   /* ---------------------------- 技能 ---------------------------- */
 
@@ -2606,7 +2611,7 @@ export function apply(ctx, rawConfig = {}) {
     try {
       const dispose = skills.register({
         name: SKILL_NAME,
-        description: '用本机格式匠处理论文：套版（预览后直接创建分支）、提交检查（跑诊断、读问题）、资料与页码取证。附件导入知识库和投稿打包用 formatjiang_use_attachments，宿主注入聊天身份。',
+        description: '用本机格式匠处理论文：套版（预览后直接创建分支）、提交检查（跑诊断、读问题）、资料与页码取证。附件导入知识库和投稿打包用 geshijiang_use_attachments，宿主注入聊天身份。',
         whenToUse: '用户要给论文套用学校或期刊模板、做提交前检查、核对参考文献页码，或从本机资料里找依据时。',
         // source 是宿主的必填字段（SkillSummary.source），缺了会在加载技能时被判为非法定义。
         source: 'runtime',
@@ -2616,10 +2621,10 @@ export function apply(ctx, rawConfig = {}) {
         if (typeof dispose === 'function') dispose();
       };
     } catch (error) {
-      logger?.warn?.(`[formatjiang] 注册技能失败：${String(error?.message || error)}`);
+      logger?.warn?.(`[geshijiang] 注册技能失败：${String(error?.message || error)}`);
       return () => {};
     }
-  }, 'formatjiang: skill');
+  }, 'geshijiang: skill');
 
   /* ---------------------------- 命令 ---------------------------- */
 
@@ -2627,7 +2632,7 @@ export function apply(ctx, rawConfig = {}) {
     const commands = ctx.get?.('commands');
     if (!commands?.register) return () => {};
     return commands.register({
-      name: 'formatjiang',
+      name: 'geshijiang',
       description: '查看格式匠接入状态；`重连` 重建桥接，`断开` 主动断开并暂停自动重连，`诊断` 生成可复制的诊断信息',
       input: { hint: '留空查看状态，或输入 重连 / 断开 / 诊断' },
       handler: (invocation) => {
@@ -2668,11 +2673,11 @@ export function apply(ctx, rawConfig = {}) {
         lines.push(hostChannelText(snap));
         if (snap.server.toolCount) lines.push(`工具 ${snap.server.toolCount} 个`);
         for (const hint of snap.hints) lines.push(`待处理：${hint}`);
-        lines.push('输入 `/formatjiang 诊断` 可生成可复制的接入信息。');
+        lines.push('输入 `/geshijiang 诊断` 可生成可复制的接入信息。');
         return { kind: snap.usable ? 'success' : 'error', text: lines.join('\n') };
       },
     });
-  }, 'formatjiang: command');
+  }, 'geshijiang: command');
 
   /* ---------------------------- 面板通道 ---------------------------- */
 
@@ -2697,7 +2702,7 @@ export function apply(ctx, rawConfig = {}) {
         res.setHeader?.('cache-control', 'no-store');
         res.end(body);
       } catch (error) {
-        logger?.warn?.(`[formatjiang] 写面板响应失败：${String(error?.message || error)}`);
+        logger?.warn?.(`[geshijiang] 写面板响应失败：${String(error?.message || error)}`);
       }
     };
 
@@ -2830,7 +2835,7 @@ export function apply(ctx, rawConfig = {}) {
     });
     state.panel = { ok: true, origin: selfOrigin || '', at: new Date().toISOString(), error: '' };
     return dispose;
-  }, 'formatjiang: panel route', (error) => {
+  }, 'geshijiang: panel route', (error) => {
     state.panel = { ok: false, origin: '', at: new Date().toISOString(), error: String(error?.message || error) };
   });
 
@@ -2850,7 +2855,7 @@ export function apply(ctx, rawConfig = {}) {
         stopSupervisor();
         unmount();
       };
-    }, 'formatjiang: bridge');
+    }, 'geshijiang: bridge');
   } else {
     // 上一轮可能还是 host 在挂：这里当场把交接台上的「宿主在挂」清掉，
     // 否则预设那一份会以为有人占着位置，十分钟内都不肯上场。

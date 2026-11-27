@@ -1,5 +1,5 @@
 {
-  "name": "@local/formatjiang-assistant",
+  "name": "@local/geshijiang-assistant",
   "version": "0.4.7",
   "private": true,
   "description": "格式匠论文助手：把本机格式匠的论文工具接进 DeepSeek Harness，负责发现、拉起、重连与状态说明。",
@@ -48,7 +48,7 @@
     "dsh",
     "deepseek-harness",
     "dsh-plugin",
-    "formatjiang",
+    "geshijiang",
     "docx",
     "论文"
   ],

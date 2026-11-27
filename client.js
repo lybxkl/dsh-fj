@@ -2,14 +2,14 @@
  * 格式匠论文助手 · Client 半片（单文件、零构建）
  *
  * 只做加法：插件页给一张连接卡，对话里给三类工具卡（状态行、套版方案、提交检查）。
- * 颜色一律走宿主主题令牌，不写死十六进制；数据只从同源接口 /formatjiang/api 读。
+ * 颜色一律走宿主主题令牌，不写死十六进制；数据只从同源接口 /geshijiang/api 读。
  *
  * 卡片只能显示与发请求，不能调用 MCP 工具：按钮要么走本插件的同源接口（打开格式匠、导出诊断），
  * 要么把下一步交回对话（套版由模型带着令牌直接建分支）。不做点了没反应的按钮。
  */
 (function () {
-  var MODULE_ID = '@local/formatjiang-assistant';
-  var API = '/formatjiang/api';
+  var MODULE_ID = '@local/geshijiang-assistant';
+  var API = '/geshijiang/api';
 
   window.__ModuleLoader__.load({
     id: MODULE_ID,
@@ -31,7 +31,7 @@
        * 「宿主忙」完全一样，排障时没有任何线索。现在把失败原因带出来，页面渲染
        * 时直接显示，并给一个「重试」按钮。
        */
-      function useFormatjiangState(active) {
+      function useGeshijiangState(active) {
         var pair = useState(null);
         var state = pair[0];
         var setState = pair[1];
@@ -81,7 +81,7 @@
                 setError(reason);
                 // 每 10 次记一条就够：轮询失败会一直重复，日志刷屏反而没人看。
                 if (failures === 1 || failures % 10 === 0) {
-                  try { console.warn('[formatjiang] 读取插件状态失败：' + reason); } catch (e) { /* 没 console 的环境忽略 */ }
+                  try { console.warn('[geshijiang] 读取插件状态失败：' + reason); } catch (e) { /* 没 console 的环境忽略 */ }
                 }
               })
               .then(function () { inFlight = false; });
@@ -257,81 +257,81 @@
        * ------------------------------------------------------------------ */
 
       var CSS = [
-        '.fj{--fj-line:var(--dsw-alias-border-l1,rgba(128,128,128,.28));',
-        '  --fj-bg:var(--dsw-alias-bg-layer-1,transparent);',
-        '  --fj-ink:var(--dsw-alias-label-primary,currentColor);',
-        '  --fj-ink2:var(--dsw-alias-label-secondary,currentColor);',
-        '  --fj-ok:var(--dsw-alias-state-success-primary,#3f9d6f);',
-        '  --fj-warn:var(--dsw-alias-state-warn-primary,#b9882f);',
-        '  --fj-err:var(--dsw-alias-state-error-primary,#c85858);',
-        '  --fj-brand:var(--dsw-alias-brand-primary,#5b7cfa);',
-        '  color:var(--fj-ink);font-size:13px;line-height:1.55;}',
-        '.fj *{box-sizing:border-box;}',
-        '.fj-card{background:var(--fj-bg);border:.5px solid var(--fj-line);border-radius:12px;overflow:hidden;}',
-        '.fj-head{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:.5px solid var(--fj-line);}',
-        '.fj-title{font-size:13px;font-weight:600;}',
-        '.fj-right{margin-left:auto;font-size:12px;color:var(--fj-ink2);text-align:right;}',
-        '.fj-body{padding:0 14px;}',
-        '.fj-group{padding:11px 0;border-top:.5px solid var(--fj-line);}',
-        '.fj-group:first-child{border-top:none;}',
-        '.fj-k{font-size:12px;color:var(--fj-ink2);}',
-        '.fj-v{margin-top:3px;font-size:13px;}',
-        '.fj-meta{margin-top:2px;font-size:12px;color:var(--fj-ink2);}',
-        '.fj-foot{display:flex;align-items:center;gap:8px;padding:11px 14px;border-top:.5px solid var(--fj-line);}',
-        '.fj-grow{flex:1;}',
-        '.fj-btn{height:30px;padding:0 12px;border-radius:8px;font-size:12.5px;font-family:inherit;',
-        '  border:.5px solid var(--fj-line);background:transparent;color:var(--fj-ink);cursor:pointer;}',
-        '.fj-btn:hover{background:var(--fj-line);}',
-        '.fj-btn:disabled{opacity:.55;cursor:default;}',
-        '.fj-btn-primary{background:var(--fj-brand);border-color:transparent;color:#fff;}',
-        '.fj-btn-primary:hover{filter:brightness(1.06);background:var(--fj-brand);}',
-        '.fj-btn-text{border-color:transparent;color:var(--fj-ink2);padding:0 4px;}',
-        '.fj-chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:6px;',
-        '  border:.5px solid var(--fj-line);font-size:12px;color:var(--fj-ink2);white-space:nowrap;}',
-        '.fj-chip-ok{color:var(--fj-ok);}',
-        '.fj-chip-warn{color:var(--fj-warn);}',
-        '.fj-chip-err{color:var(--fj-err);}',
-        '.fj-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none;}',
-        '.fj-err{margin:10px 0 0;padding:9px 11px;border-radius:8px;border:.5px solid var(--fj-line);',
-        '  background:color-mix(in srgb,var(--fj-ink) 6%,transparent);font-family:ui-monospace,Consolas,monospace;',
-        '  font-size:12px;color:var(--fj-ink2);word-break:break-all;}',
-        '.fj-stats{display:flex;border-bottom:.5px solid var(--fj-line);}',
-        '.fj-stat{flex:1;padding:12px 14px;border-right:.5px solid var(--fj-line);}',
-        '.fj-stat:last-child{border-right:none;}',
-        '.fj-stat b{display:block;font-size:19px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums;}',
-        '.fj-stat span{font-size:12px;color:var(--fj-ink2);}',
-        '.fj-row{display:flex;align-items:flex-start;gap:8px;padding:9px 14px;border-top:.5px solid var(--fj-line);font-size:12.5px;}',
-        '.fj-row:first-child{border-top:none;}',
-        '.fj-row .fj-k{margin:0;flex:none;}',
-        '.fj-row .fj-right{font-size:12px;word-break:break-all;}',
-        '.fj-empty{padding:12px 14px;font-size:12.5px;color:var(--fj-ink2);}',
-        '.fj-text{padding:11px 14px;font-size:12.5px;color:var(--fj-ink2);white-space:pre-wrap;word-break:break-word;}',
-        '.fj-srow{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fj-ink2);padding:2px 0;}',
-        '.fj-finding{padding:10px 14px;border-top:.5px solid var(--fj-line);}',
-        '.fj-finding:first-child{border-top:none;}',
-        '.fj-finding-head{display:flex;align-items:center;gap:8px;}',
-        '.fj-finding-msg{font-size:12.5px;color:var(--fj-ink);flex:1;min-width:0;}',
-        '.fj-finding-meta{margin-top:4px;font-size:12px;color:var(--fj-ink2);}',
-        '.fj-note{padding:10px 14px;font-size:12px;color:var(--fj-ink2);border-top:.5px solid var(--fj-line);}',
-        '.fj-page{max-width:720px;}',
-        '.fj-lead{padding:12px 14px;font-size:12.5px;color:var(--fj-ink2);}',
-        '.fj-step{display:flex;gap:10px;padding:10px 14px;border-top:.5px solid var(--fj-line);}',
-        '.fj-step:first-child{border-top:none;}',
-        '.fj-step-no{width:18px;height:18px;border-radius:50%;flex:none;display:flex;align-items:center;',
-        '  justify-content:center;font-size:11px;color:var(--fj-ink2);border:.5px solid var(--fj-line);}',
-        '.fj-step-no.is-done{color:var(--fj-ok);border-color:currentColor;}',
-        '.fj-step-body{flex:1;min-width:0;}',
-        '.fj-step-title{font-size:12.5px;}',
-        '.fj-step-hint{margin-top:3px;font-size:12px;color:var(--fj-ink2);}',
-        '.fj-list{margin:0;padding:0 14px 12px 30px;}',
-        '.fj-list li{padding:3px 0;font-size:12.5px;color:var(--fj-ink2);}',
-        '.fj-details{margin-top:6px;}',
-        '.fj-details>summary{cursor:pointer;font-size:12px;color:var(--fj-ink2);}',
-        '.fj-details>summary:hover{color:var(--fj-ink);}',
-        '.fj-details ul{margin:6px 0 0;padding:0 0 0 16px;max-height:190px;overflow:auto;}',
-        '.fj-details li{padding:2px 0;font-size:12px;color:var(--fj-ink2);word-break:break-all;}',
-        '.fj-mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;color:var(--fj-ink2);}',
-        '.fj-name{color:var(--fj-ink);}',
+        '.geshijiang{--geshijiang-line:var(--dsw-alias-border-l1,rgba(128,128,128,.28));',
+        '  --geshijiang-bg:var(--dsw-alias-bg-layer-1,transparent);',
+        '  --geshijiang-ink:var(--dsw-alias-label-primary,currentColor);',
+        '  --geshijiang-ink2:var(--dsw-alias-label-secondary,currentColor);',
+        '  --geshijiang-ok:var(--dsw-alias-state-success-primary,#3f9d6f);',
+        '  --geshijiang-warn:var(--dsw-alias-state-warn-primary,#b9882f);',
+        '  --geshijiang-err:var(--dsw-alias-state-error-primary,#c85858);',
+        '  --geshijiang-brand:var(--dsw-alias-brand-primary,#5b7cfa);',
+        '  color:var(--geshijiang-ink);font-size:13px;line-height:1.55;}',
+        '.geshijiang *{box-sizing:border-box;}',
+        '.geshijiang-card{background:var(--geshijiang-bg);border:.5px solid var(--geshijiang-line);border-radius:12px;overflow:hidden;}',
+        '.geshijiang-head{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:.5px solid var(--geshijiang-line);}',
+        '.geshijiang-title{font-size:13px;font-weight:600;}',
+        '.geshijiang-right{margin-left:auto;font-size:12px;color:var(--geshijiang-ink2);text-align:right;}',
+        '.geshijiang-body{padding:0 14px;}',
+        '.geshijiang-group{padding:11px 0;border-top:.5px solid var(--geshijiang-line);}',
+        '.geshijiang-group:first-child{border-top:none;}',
+        '.geshijiang-k{font-size:12px;color:var(--geshijiang-ink2);}',
+        '.geshijiang-v{margin-top:3px;font-size:13px;}',
+        '.geshijiang-meta{margin-top:2px;font-size:12px;color:var(--geshijiang-ink2);}',
+        '.geshijiang-foot{display:flex;align-items:center;gap:8px;padding:11px 14px;border-top:.5px solid var(--geshijiang-line);}',
+        '.geshijiang-grow{flex:1;}',
+        '.geshijiang-btn{height:30px;padding:0 12px;border-radius:8px;font-size:12.5px;font-family:inherit;',
+        '  border:.5px solid var(--geshijiang-line);background:transparent;color:var(--geshijiang-ink);cursor:pointer;}',
+        '.geshijiang-btn:hover{background:var(--geshijiang-line);}',
+        '.geshijiang-btn:disabled{opacity:.55;cursor:default;}',
+        '.geshijiang-btn-primary{background:var(--geshijiang-brand);border-color:transparent;color:#fff;}',
+        '.geshijiang-btn-primary:hover{filter:brightness(1.06);background:var(--geshijiang-brand);}',
+        '.geshijiang-btn-text{border-color:transparent;color:var(--geshijiang-ink2);padding:0 4px;}',
+        '.geshijiang-chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:6px;',
+        '  border:.5px solid var(--geshijiang-line);font-size:12px;color:var(--geshijiang-ink2);white-space:nowrap;}',
+        '.geshijiang-chip-ok{color:var(--geshijiang-ok);}',
+        '.geshijiang-chip-warn{color:var(--geshijiang-warn);}',
+        '.geshijiang-chip-err{color:var(--geshijiang-err);}',
+        '.geshijiang-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none;}',
+        '.geshijiang-err{margin:10px 0 0;padding:9px 11px;border-radius:8px;border:.5px solid var(--geshijiang-line);',
+        '  background:color-mix(in srgb,var(--geshijiang-ink) 6%,transparent);font-family:ui-monospace,Consolas,monospace;',
+        '  font-size:12px;color:var(--geshijiang-ink2);word-break:break-all;}',
+        '.geshijiang-stats{display:flex;border-bottom:.5px solid var(--geshijiang-line);}',
+        '.geshijiang-stat{flex:1;padding:12px 14px;border-right:.5px solid var(--geshijiang-line);}',
+        '.geshijiang-stat:last-child{border-right:none;}',
+        '.geshijiang-stat b{display:block;font-size:19px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums;}',
+        '.geshijiang-stat span{font-size:12px;color:var(--geshijiang-ink2);}',
+        '.geshijiang-row{display:flex;align-items:flex-start;gap:8px;padding:9px 14px;border-top:.5px solid var(--geshijiang-line);font-size:12.5px;}',
+        '.geshijiang-row:first-child{border-top:none;}',
+        '.geshijiang-row .geshijiang-k{margin:0;flex:none;}',
+        '.geshijiang-row .geshijiang-right{font-size:12px;word-break:break-all;}',
+        '.geshijiang-empty{padding:12px 14px;font-size:12.5px;color:var(--geshijiang-ink2);}',
+        '.geshijiang-text{padding:11px 14px;font-size:12.5px;color:var(--geshijiang-ink2);white-space:pre-wrap;word-break:break-word;}',
+        '.geshijiang-srow{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--geshijiang-ink2);padding:2px 0;}',
+        '.geshijiang-finding{padding:10px 14px;border-top:.5px solid var(--geshijiang-line);}',
+        '.geshijiang-finding:first-child{border-top:none;}',
+        '.geshijiang-finding-head{display:flex;align-items:center;gap:8px;}',
+        '.geshijiang-finding-msg{font-size:12.5px;color:var(--geshijiang-ink);flex:1;min-width:0;}',
+        '.geshijiang-finding-meta{margin-top:4px;font-size:12px;color:var(--geshijiang-ink2);}',
+        '.geshijiang-note{padding:10px 14px;font-size:12px;color:var(--geshijiang-ink2);border-top:.5px solid var(--geshijiang-line);}',
+        '.geshijiang-page{max-width:720px;}',
+        '.geshijiang-lead{padding:12px 14px;font-size:12.5px;color:var(--geshijiang-ink2);}',
+        '.geshijiang-step{display:flex;gap:10px;padding:10px 14px;border-top:.5px solid var(--geshijiang-line);}',
+        '.geshijiang-step:first-child{border-top:none;}',
+        '.geshijiang-step-no{width:18px;height:18px;border-radius:50%;flex:none;display:flex;align-items:center;',
+        '  justify-content:center;font-size:11px;color:var(--geshijiang-ink2);border:.5px solid var(--geshijiang-line);}',
+        '.geshijiang-step-no.is-done{color:var(--geshijiang-ok);border-color:currentColor;}',
+        '.geshijiang-step-body{flex:1;min-width:0;}',
+        '.geshijiang-step-title{font-size:12.5px;}',
+        '.geshijiang-step-hint{margin-top:3px;font-size:12px;color:var(--geshijiang-ink2);}',
+        '.geshijiang-list{margin:0;padding:0 14px 12px 30px;}',
+        '.geshijiang-list li{padding:3px 0;font-size:12.5px;color:var(--geshijiang-ink2);}',
+        '.geshijiang-details{margin-top:6px;}',
+        '.geshijiang-details>summary{cursor:pointer;font-size:12px;color:var(--geshijiang-ink2);}',
+        '.geshijiang-details>summary:hover{color:var(--geshijiang-ink);}',
+        '.geshijiang-details ul{margin:6px 0 0;padding:0 0 0 16px;max-height:190px;overflow:auto;}',
+        '.geshijiang-details li{padding:2px 0;font-size:12px;color:var(--geshijiang-ink2);word-break:break-all;}',
+        '.geshijiang-mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;color:var(--geshijiang-ink2);}',
+        '.geshijiang-name{color:var(--geshijiang-ink);}',
       ].join('');
 
       function Style() {
@@ -345,33 +345,33 @@
        * 以前这里只会一直转，读不到接口和读得慢在界面上分不出来。
        */
       function StatusPlaceholder(props) {
-        var root = props && props.page ? 'fj fj-page' : 'fj';
+        var root = props && props.page ? 'geshijiang geshijiang-page' : 'geshijiang';
         if (!props || !props.error) {
-          return h('div', { className: root }, h(Style), h('div', { className: 'fj-empty' }, '正在读取格式匠状态'));
+          return h('div', { className: root }, h(Style), h('div', { className: 'geshijiang-empty' }, '正在读取格式匠状态'));
         }
         return h('div', { className: root }, h(Style),
-          h('div', { className: 'fj-empty' }, '读不到格式匠状态：' + props.error),
-          h('div', { className: 'fj-meta' },
+          h('div', { className: 'geshijiang-empty' }, '读不到格式匠状态：' + props.error),
+          h('div', { className: 'geshijiang-meta' },
             '插件页接口 ' + API + '/state 没有返回。先看 设置 → 内置插件 里这一项的状态与错误；'
             + '刚装好或刚改过插件时需要重启 DSH。'),
-          h('div', { className: 'fj-foot' },
-            h('button', { className: 'fj-btn fj-btn-primary', onClick: props.onRetry }, '重试'),
-            h('span', { className: 'fj-grow' }),
-            h('span', { className: 'fj-meta' }, '在对话里输入 /formatjiang 诊断 可看到装配失败原因')),
+          h('div', { className: 'geshijiang-foot' },
+            h('button', { className: 'geshijiang-btn geshijiang-btn-primary', onClick: props.onRetry }, '重试'),
+            h('span', { className: 'geshijiang-grow' }),
+            h('span', { className: 'geshijiang-meta' }, '在对话里输入 /geshijiang 诊断 可看到装配失败原因')),
         );
       }
 
       function toneClass(tone) {
-        if (tone === 'ok') return 'fj-chip fj-chip-ok';
-        if (tone === 'warn') return 'fj-chip fj-chip-warn';
-        if (tone === 'error') return 'fj-chip fj-chip-err';
-        return 'fj-chip';
+        if (tone === 'ok') return 'geshijiang-chip geshijiang-chip-ok';
+        if (tone === 'warn') return 'geshijiang-chip geshijiang-chip-warn';
+        if (tone === 'error') return 'geshijiang-chip geshijiang-chip-err';
+        return 'geshijiang-chip';
       }
 
       function row(label, value, key) {
-        return h('div', { key: key || label, className: 'fj-row' },
-          h('span', { className: 'fj-k' }, label),
-          h('span', { className: 'fj-right' }, value),
+        return h('div', { key: key || label, className: 'geshijiang-row' },
+          h('span', { className: 'geshijiang-k' }, label),
+          h('span', { className: 'geshijiang-right' }, value),
         );
       }
 
@@ -393,7 +393,7 @@
       function autoHint(state) {
         var server = (state && state.server) || {};
         var auto = (state && state.auto) || {};
-        if (state && state.formatjiang && state.formatjiang.updating) return '格式匠正在安装更新，装完会自动重连';
+        if (state && state.geshijiang && state.geshijiang.updating) return '格式匠正在安装更新，装完会自动重连';
         if (server.state !== 'failed' || !auto.enabled) return '';
         if (auto.exhausted) return '自动重连已停止，处理完格式匠那边的问题后点「重新连接」';
         if (!auto.nextAtMs) return '即将自动重连';
@@ -495,7 +495,7 @@
           requestJson('/diagnostics')
             .then(function (body) { return copyText(body && body.text ? body.text : ''); })
             .then(function (done) { setCopyState(done ? '已复制' : '复制失败，请手动截图'); })
-            .catch(function () { setCopyState('读取诊断信息超时，请用 /formatjiang 诊断'); });
+            .catch(function () { setCopyState('读取诊断信息超时，请用 /geshijiang 诊断'); });
         };
 
         return api;
@@ -513,23 +513,23 @@
         var busy = props.busy === true;
         var onRefresh = props.onRefresh;
 
-        var head = h('div', { key: 'head', className: 'fj-head' },
-          h('span', { className: 'fj-k' }, '连接后获得'),
+        var head = h('div', { key: 'head', className: 'geshijiang-head' },
+          h('span', { className: 'geshijiang-k' }, '连接后获得'),
           h('button', {
-            className: 'fj-btn fj-btn-text',
+            className: 'geshijiang-btn geshijiang-btn-text',
             disabled: busy,
             onClick: onRefresh,
           }, busy ? '读取中' : '刷新'),
         );
 
         if (!catalog) {
-          return h('div', { className: 'fj-body' }, h('div', { className: 'fj-group' }, head,
-            h('div', { className: 'fj-meta' }, '还没有读取清单；连上之后会自动读一次。')));
+          return h('div', { className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' }, head,
+            h('div', { className: 'geshijiang-meta' }, '还没有读取清单；连上之后会自动读一次。')));
         }
         if (catalog.error) {
-          return h('div', { className: 'fj-body' }, h('div', { className: 'fj-group' }, head,
-            h('div', { className: 'fj-err' }, catalog.error),
-            h('div', { className: 'fj-meta' }, '旧版本的格式匠还没有这个清单接口；升级后这里会列工具、资源与提示词。')));
+          return h('div', { className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' }, head,
+            h('div', { className: 'geshijiang-err' }, catalog.error),
+            h('div', { className: 'geshijiang-meta' }, '旧版本的格式匠还没有这个清单接口；升级后这里会列工具、资源与提示词。')));
         }
 
         var data = catalog.data || {};
@@ -543,15 +543,15 @@
         var stats = groups.map(function (group) { return row(group.label, String(group.items.length), group.key); });
         var details = groups.filter(function (group) { return group.items.length > 0; }).map(function (group) {
           var shown = group.items.slice(0, 30);
-          return h('details', { key: group.key, className: 'fj-details' },
+          return h('details', { key: group.key, className: 'geshijiang-details' },
             h('summary', null, group.label + ' ' + group.items.length + ' 项'),
             h('ul', null, shown.map(function (item, index) {
               return h('li', { key: index },
-                h('span', { className: 'fj-name' }, item.name || '未命名'),
+                h('span', { className: 'geshijiang-name' }, item.name || '未命名'),
                 item.note ? h('span', null, '　' + item.note) : null);
             })),
             group.items.length > shown.length
-              ? h('div', { className: 'fj-meta' }, '另有 ' + (group.items.length - shown.length) + ' 项')
+              ? h('div', { className: 'geshijiang-meta' }, '另有 ' + (group.items.length - shown.length) + ' 项')
               : null,
           );
         });
@@ -563,16 +563,16 @@
         if (data.protocolVersion) meta += '，协议 ' + data.protocolVersion;
         if (data.truncated) meta += '，清单已截断';
 
-        return h('div', { className: 'fj-body' }, h('div', { className: 'fj-group' },
+        return h('div', { className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' },
           head,
           h('div', null, stats),
-          h('div', { className: 'fj-meta' }, meta),
-          details.length ? h('div', null, details) : h('div', { className: 'fj-meta' }, '网关没有暴露资源或提示词。'),
+          h('div', { className: 'geshijiang-meta' }, meta),
+          details.length ? h('div', null, details) : h('div', { className: 'geshijiang-meta' }, '网关没有暴露资源或提示词。'),
         ));
       }
 
       function ConnectionCard() {
-        var source = useFormatjiangState(true);
+        var source = useGeshijiangState(true);
         var state = source.state;
         var setState = source.setState;
         var actions = useConnectionActions(setState);
@@ -586,7 +586,7 @@
           return h(StatusPlaceholder, { error: source.error, onRetry: source.retry });
         }
 
-        var f = state.formatjiang || {};
+        var f = state.geshijiang || {};
         var server = state.server || {};
         var hints = state.hints || [];
         // 预设作用域下「未挂载」是配置结果，不是故障：别把它画成待修的红条。
@@ -625,43 +625,43 @@
         ];
 
         var children = [
-          h('div', { key: 'head', className: 'fj-head' },
-            h('span', { className: toneClass(state.tone) }, h('span', { className: 'fj-dot' }), state.label),
-            h('span', { className: 'fj-right' }, state.detail || ''),
+          h('div', { key: 'head', className: 'geshijiang-head' },
+            h('span', { className: toneClass(state.tone) }, h('span', { className: 'geshijiang-dot' }), state.label),
+            h('span', { className: 'geshijiang-right' }, state.detail || ''),
           ),
         ];
 
         if (hints.length) {
-          children.push(h('div', { key: 'hints', className: 'fj-body' }, h('div', { className: 'fj-group' },
-            hints.map(function (hint, index) { return h('div', { key: index, className: 'fj-text' }, hint); }),
+          children.push(h('div', { key: 'hints', className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' },
+            hints.map(function (hint, index) { return h('div', { key: index, className: 'geshijiang-text' }, hint); }),
           )));
         }
 
         if (notice) {
-          children.push(h('div', { key: 'notice', className: 'fj-note' }, notice));
+          children.push(h('div', { key: 'notice', className: 'geshijiang-note' }, notice));
         }
 
         if (presetScope) {
-          children.push(h('div', { key: 'scope', className: 'fj-note' }, presetBridge
+          children.push(h('div', { key: 'scope', className: 'geshijiang-note' }, presetBridge
             ? presetBridgeText(presetBridge)
             : '桥接由「格式匠」预设提供：新建会话时选这个预设，格式匠的工具才会加载；其他预设的会话不加载它们。'));
         } else if (offScope) {
-          children.push(h('div', { key: 'scope', className: 'fj-note' }, '桥接在插件配置里关着（mountScope: off）：格式匠工具需要在别处自己配 mcp 客户端；宿主工具（附件、会话）不受影响。'));
+          children.push(h('div', { key: 'scope', className: 'geshijiang-note' }, '桥接在插件配置里关着（mountScope: off）：格式匠工具需要在别处自己配 mcp 客户端；宿主工具（附件、会话）不受影响。'));
         }
 
         if (broken) {
-          children.push(h('div', { key: 'repair', className: 'fj-body' }, h('div', { className: 'fj-group' },
-            h('div', { className: 'fj-k' }, server.lastError ? '最近一次错误' : '状态'),
+          children.push(h('div', { key: 'repair', className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' },
+            h('div', { className: 'geshijiang-k' }, server.lastError ? '最近一次错误' : '状态'),
             server.lastError
-              ? h('div', { className: 'fj-err' }, server.lastError)
-              : h('div', { className: 'fj-text' }, '桥接没有挂上，按下面的按钮重新连接。'),
-            waiting ? h('div', { className: 'fj-meta' }, waiting) : null,
-            state.paused ? h('div', { className: 'fj-meta' }, '已手动断开；需要恢复时点「重新连接」') : null,
-            h('div', { className: 'fj-meta' }, '打开格式匠后会自动重连，不需要重新配置。'),
+              ? h('div', { className: 'geshijiang-err' }, server.lastError)
+              : h('div', { className: 'geshijiang-text' }, '桥接没有挂上，按下面的按钮重新连接。'),
+            waiting ? h('div', { className: 'geshijiang-meta' }, waiting) : null,
+            state.paused ? h('div', { className: 'geshijiang-meta' }, '已手动断开；需要恢复时点「重新连接」') : null,
+            h('div', { className: 'geshijiang-meta' }, '打开格式匠后会自动重连，不需要重新配置。'),
           )));
         }
 
-        children.push(h('div', { key: 'cap', className: 'fj-body' }, h('div', { className: 'fj-group' }, capabilities)));
+        children.push(h('div', { key: 'cap', className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' }, capabilities)));
         if (server.state === 'connected' || state.catalog) {
           children.push(h('div', { key: 'catalog' }, h(CatalogBlock, {
             catalog: state.catalog,
@@ -669,37 +669,37 @@
             onRefresh: actions.refreshCatalog,
           })));
         }
-        children.push(h('div', { key: 'foot', className: 'fj-foot' },
+        children.push(h('div', { key: 'foot', className: 'geshijiang-foot' },
           h('button', {
-            className: 'fj-btn fj-btn-primary',
+            className: 'geshijiang-btn geshijiang-btn-primary',
             disabled: pending === '/open' || !f.executable,
             onClick: function () { run('/open'); },
           }, '打开格式匠'),
           presetScope || offScope ? null : h('button', {
-            className: 'fj-btn',
+            className: 'geshijiang-btn',
             disabled: pending === '/connect',
             onClick: function () { run('/connect'); },
           }, '重新连接'),
           presetScope ? null : (server.state === 'connected'
             ? h('button', {
-              className: 'fj-btn fj-btn-text',
+              className: 'geshijiang-btn geshijiang-btn-text',
               disabled: pending === '/disconnect',
               onClick: function () { run('/disconnect'); },
             }, '断开连接')
             : null),
-          h('span', { className: 'fj-grow' }),
+          h('span', { className: 'geshijiang-grow' }),
           h('button', {
-            className: 'fj-btn fj-btn-text',
+            className: 'geshijiang-btn geshijiang-btn-text',
             onClick: copyDiagnostics,
           }, copyState || '复制诊断信息'),
         ));
 
-        return h('div', { className: 'fj' },
+        return h('div', { className: 'geshijiang' },
           h(Style),
-          h('div', { className: 'fj-card' }, children),
-          h('div', { className: 'fj', style: { marginTop: 18 } },
-            h('div', { className: 'fj-k', style: { marginBottom: 6 } }, '本机信息'),
-            h('div', { className: 'fj-card' }, h('div', { className: 'fj-body' }, h('div', { className: 'fj-group' }, versions))),
+          h('div', { className: 'geshijiang-card' }, children),
+          h('div', { className: 'geshijiang', style: { marginTop: 18 } },
+            h('div', { className: 'geshijiang-k', style: { marginBottom: 6 } }, '本机信息'),
+            h('div', { className: 'geshijiang-card' }, h('div', { className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' }, versions))),
           ),
         );
       }
@@ -708,7 +708,7 @@
       function ConnectionPage(props) {
         var view = props && props.view;
         if (view === 'summary') {
-          return h('span', { className: 'fj-k' }, '格式匠接入');
+          return h('span', { className: 'geshijiang-k' }, '格式匠接入');
         }
         return h(ConnectionCard);
       }
@@ -718,9 +718,9 @@
        * ------------------------------------------------------------------ */
 
       function ToolShell(props) {
-        return h('div', { className: 'fj', style: { margin: '6px 0' } },
+        return h('div', { className: 'geshijiang', style: { margin: '6px 0' } },
           h(Style),
-          h('div', { className: 'fj-card' }, props.children),
+          h('div', { className: 'geshijiang-card' }, props.children),
         );
       }
 
@@ -729,13 +729,13 @@
         return function StatusRow(props) {
           var phase = (props && props.phase) || '';
           var text = phase === 'result' ? textOf(props.block).replace(/\s+/g, ' ').trim() : '';
-          var label = toolName === 'formatjiang_open' ? '打开格式匠'
-            : toolName === 'formatjiang_connect' ? '重新连接格式匠'
-              : toolName === 'formatjiang_diagnostics' ? '格式匠诊断' : '格式匠状态';
-          return h('div', { className: 'fj' },
+          var label = toolName === 'geshijiang_open' ? '打开格式匠'
+            : toolName === 'geshijiang_connect' ? '重新连接格式匠'
+              : toolName === 'geshijiang_diagnostics' ? '格式匠诊断' : '格式匠状态';
+          return h('div', { className: 'geshijiang' },
             h(Style),
-            h('div', { className: 'fj-srow' },
-              h('span', { className: 'fj-dot', style: { color: 'var(--fj-ok)' } }),
+            h('div', { className: 'geshijiang-srow' },
+              h('span', { className: 'geshijiang-dot', style: { color: 'var(--geshijiang-ok)' } }),
               h('span', null, label),
               h('span', { style: { marginLeft: 'auto', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: text },
                 phase === 'result' ? (text.length > 80 ? text.slice(0, 80) + '…' : text || '完成') : '执行中'),
@@ -790,12 +790,12 @@
 
         if (phase !== 'result') {
           return h(ToolShell, null,
-            h('div', { className: 'fj-head' }, h('span', { className: 'fj-title' }, '套版方案'), h('span', { className: 'fj-right' }, '正在预览')));
+            h('div', { className: 'geshijiang-head' }, h('span', { className: 'geshijiang-title' }, '套版方案'), h('span', { className: 'geshijiang-right' }, '正在预览')));
         }
         if (!plan) {
           return h(ToolShell, null,
-            h('div', { className: 'fj-head' }, h('span', { className: 'fj-title' }, '套版方案'), h('span', { className: toneClass('warn') }, '未解析')),
-            h('div', { className: 'fj-text' }, shorten(text, 600) || '格式匠没有返回内容'),
+            h('div', { className: 'geshijiang-head' }, h('span', { className: 'geshijiang-title' }, '套版方案'), h('span', { className: toneClass('warn') }, '未解析')),
+            h('div', { className: 'geshijiang-text' }, shorten(text, 600) || '格式匠没有返回内容'),
           );
         }
 
@@ -820,42 +820,42 @@
         }
 
         var children = [
-          h('div', { key: 'head', className: 'fj-head' },
-            h('span', { className: 'fj-title' }, '套版方案'),
-            h('span', { className: toneClass(verdict.tone) }, h('span', { className: 'fj-dot' }), verdict.label),
-            h('span', { className: 'fj-right' }, token
+          h('div', { key: 'head', className: 'geshijiang-head' },
+            h('span', { className: 'geshijiang-title' }, '套版方案'),
+            h('span', { className: toneClass(verdict.tone) }, h('span', { className: 'geshijiang-dot' }), verdict.label),
+            h('span', { className: 'geshijiang-right' }, token
               ? (ttl ? Math.round(ttl / 60) + ' 分钟内有效' : '待确认')
               : '未签发确认令牌'),
           ),
           rows.length
-            ? h('div', { key: 'rows', className: 'fj-body' }, h('div', { className: 'fj-group' }, rows))
-            : h('div', { key: 'rows', className: 'fj-text' }, '计划里没有统计字段，按下方原文核对'),
+            ? h('div', { key: 'rows', className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' }, rows))
+            : h('div', { key: 'rows', className: 'geshijiang-text' }, '计划里没有统计字段，按下方原文核对'),
         ];
 
         if (steps.length) {
-          children.push(h('div', { key: 'steps', className: 'fj-body' }, h('div', { className: 'fj-group' },
-            h('div', { className: 'fj-k', style: { marginBottom: 4 } }, '将套用的规则'),
+          children.push(h('div', { key: 'steps', className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' },
+            h('div', { className: 'geshijiang-k', style: { marginBottom: 4 } }, '将套用的规则'),
             steps.slice(0, 4).map(function (step, index) {
               var detail = [step.rule, step.target].filter(Boolean).join(' ');
               var count = Number(step.affected_count) > 0 ? '影响 ' + step.affected_count + ' 处' : '';
-              return h('div', { key: index, className: 'fj-meta' },
+              return h('div', { key: index, className: 'geshijiang-meta' },
                 shorten(detail || step.module || '规则', 60) + (count ? '，' + count : ''));
             }),
-            steps.length > 4 ? h('div', { className: 'fj-meta' }, '另有 ' + (steps.length - 4) + ' 项') : null,
+            steps.length > 4 ? h('div', { className: 'geshijiang-meta' }, '另有 ' + (steps.length - 4) + ' 项') : null,
           )));
         }
 
         if (conflicts.length) {
-          children.push(h('div', { key: 'conf', className: 'fj-body' }, h('div', { className: 'fj-group' },
-            h('div', { className: 'fj-k', style: { marginBottom: 4 } }, '冲突'),
+          children.push(h('div', { key: 'conf', className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' },
+            h('div', { className: 'geshijiang-k', style: { marginBottom: 4 } }, '冲突'),
             conflicts.slice(0, 3).map(function (conflict, index) {
-              return h('div', { key: index, className: 'fj-meta' }, shorten(conflict.message || conflict.code || '未说明', 90));
+              return h('div', { key: index, className: 'geshijiang-meta' }, shorten(conflict.message || conflict.code || '未说明', 90));
             }),
-            conflicts.length > 3 ? h('div', { className: 'fj-meta' }, '另有 ' + (conflicts.length - 3) + ' 项') : null,
+            conflicts.length > 3 ? h('div', { className: 'geshijiang-meta' }, '另有 ' + (conflicts.length - 3) + ' 项') : null,
           )));
         }
 
-        children.push(h('div', { key: 'note', className: 'fj-note' }, token
+        children.push(h('div', { key: 'note', className: 'geshijiang-note' }, token
           ? '模型会带着这个令牌直接创建分支版本。分支不会覆盖源文件，也不切换当前版本。'
           : '没有可用令牌，本次不能套用。'));
 
@@ -916,12 +916,12 @@
 
         if (phase !== 'result') {
           return h(ToolShell, null,
-            h('div', { className: 'fj-head' }, h('span', { className: 'fj-title' }, '提交检查'), h('span', { className: 'fj-right' }, '正在运行')));
+            h('div', { className: 'geshijiang-head' }, h('span', { className: 'geshijiang-title' }, '提交检查'), h('span', { className: 'geshijiang-right' }, '正在运行')));
         }
         if (!data) {
           return h(ToolShell, null,
-            h('div', { className: 'fj-head' }, h('span', { className: 'fj-title' }, '提交检查'), h('span', { className: toneClass('warn') }, '未解析')),
-            h('div', { className: 'fj-text' }, shorten(text, 600) || '格式匠没有返回内容'),
+            h('div', { className: 'geshijiang-head' }, h('span', { className: 'geshijiang-title' }, '提交检查'), h('span', { className: toneClass('warn') }, '未解析')),
+            h('div', { className: 'geshijiang-text' }, shorten(text, 600) || '格式匠没有返回内容'),
           );
         }
 
@@ -939,61 +939,61 @@
           : findings;
 
         var children = [
-          h('div', { key: 'head', className: 'fj-head' },
-            h('span', { className: 'fj-title' }, '提交检查'),
+          h('div', { key: 'head', className: 'geshijiang-head' },
+            h('span', { className: 'geshijiang-title' }, '提交检查'),
             h('span', { className: toneClass(counts.error ? 'error' : counts.warning ? 'warn' : 'ok') },
-              h('span', { className: 'fj-dot' }), status ? String(status) : '完成'),
-            h('span', { className: 'fj-right' }, [paper, versionNo].filter(Boolean).join(' ') || (runId ? '运行 ' + runId : '')),
+              h('span', { className: 'geshijiang-dot' }), status ? String(status) : '完成'),
+            h('span', { className: 'geshijiang-right' }, [paper, versionNo].filter(Boolean).join(' ') || (runId ? '运行 ' + runId : '')),
           ),
-          h('div', { key: 'stats', className: 'fj-stats' },
-            stat(counts.error, '错误', 'var(--fj-err)'),
-            stat(counts.warning, '警告', 'var(--fj-warn)'),
-            stat(counts.info, '提示', 'var(--fj-ink2)'),
+          h('div', { key: 'stats', className: 'geshijiang-stats' },
+            stat(counts.error, '错误', 'var(--geshijiang-err)'),
+            stat(counts.warning, '警告', 'var(--geshijiang-warn)'),
+            stat(counts.info, '提示', 'var(--geshijiang-ink2)'),
             // 未知 severity 不能悄悄消失：出现时才补第四栏，让人知道还有没归类的条目。
-            counts.other ? stat(counts.other, '其他', 'var(--fj-ink2)') : null,
+            counts.other ? stat(counts.other, '其他', 'var(--geshijiang-ink2)') : null,
           ),
         ];
 
         if (!findings.length) {
-          children.push(h('div', { key: 'empty', className: 'fj-text' }, '这次检查没有返回问题记录。报告是否完整要看运行状态，不要据此宣布论文合格。'));
+          children.push(h('div', { key: 'empty', className: 'geshijiang-text' }, '这次检查没有返回问题记录。报告是否完整要看运行状态，不要据此宣布论文合格。'));
         } else {
           if (counts.error) {
-            children.push(h('div', { key: 'filter', className: 'fj-foot', style: { borderTop: 'none', paddingTop: 8, paddingBottom: 8 } },
+            children.push(h('div', { key: 'filter', className: 'geshijiang-foot', style: { borderTop: 'none', paddingTop: 8, paddingBottom: 8 } },
               h('button', {
-                className: onlyErrors ? 'fj-btn fj-btn-primary' : 'fj-btn',
+                className: onlyErrors ? 'geshijiang-btn geshijiang-btn-primary' : 'geshijiang-btn',
                 onClick: function () { setOnlyErrors(!onlyErrors); },
               }, onlyErrors ? '显示全部' : '只看错误'),
-              h('span', { className: 'fj-grow' }),
-              h('span', { className: 'fj-k' }, onlyErrors ? '错误 ' + counts.error + ' 条' : '共 ' + findings.length + ' 条'),
+              h('span', { className: 'geshijiang-grow' }),
+              h('span', { className: 'geshijiang-k' }, onlyErrors ? '错误 ' + counts.error + ' 条' : '共 ' + findings.length + ' 条'),
             ));
           }
           var list = shown.slice(0, 8).map(function (finding, index) {
             var meta = severityMeta(finding && finding.severity);
             var location = locationOf(finding);
-            return h('div', { key: index, className: 'fj-finding' },
-              h('div', { className: 'fj-finding-head' },
-                h('span', { className: toneClass(meta.tone === 'idle' ? '' : meta.tone) }, h('span', { className: 'fj-dot' }), meta.label),
-                h('span', { className: 'fj-finding-msg' }, shorten((finding && finding.message) || '未说明', 120)),
+            return h('div', { key: index, className: 'geshijiang-finding' },
+              h('div', { className: 'geshijiang-finding-head' },
+                h('span', { className: toneClass(meta.tone === 'idle' ? '' : meta.tone) }, h('span', { className: 'geshijiang-dot' }), meta.label),
+                h('span', { className: 'geshijiang-finding-msg' }, shorten((finding && finding.message) || '未说明', 120)),
               ),
-              location ? h('div', { className: 'fj-finding-meta' }, location) : null,
+              location ? h('div', { className: 'geshijiang-finding-meta' }, location) : null,
             );
           });
-          children.push(h('div', { key: 'list', className: 'fj-body' }, list));
+          children.push(h('div', { key: 'list', className: 'geshijiang-body' }, list));
           if (shown.length > 8) {
-            children.push(h('div', { key: 'more', className: 'fj-note' }, '另有 ' + (shown.length - 8) + ' 条，完整清单见报告或让模型调用 list_findings。'));
+            children.push(h('div', { key: 'more', className: 'geshijiang-note' }, '另有 ' + (shown.length - 8) + ' 条，完整清单见报告或让模型调用 list_findings。'));
           }
           if (sourceChanged) {
-            children.push(h('div', { key: 'stale', className: 'fj-note' }, '源文件在这次检查之后又变过，这份报告不能当作当前文件的结论，需要重跑。'));
+            children.push(h('div', { key: 'stale', className: 'geshijiang-note' }, '源文件在这次检查之后又变过，这份报告不能当作当前文件的结论，需要重跑。'));
           }
         }
 
         if (note) {
-          children.push(h('div', { key: 'opennote', className: 'fj-note' }, note));
+          children.push(h('div', { key: 'opennote', className: 'geshijiang-note' }, note));
         }
 
-        children.push(h('div', { key: 'foot', className: 'fj-foot' },
+        children.push(h('div', { key: 'foot', className: 'geshijiang-foot' },
           h('button', {
-            className: 'fj-btn',
+            className: 'geshijiang-btn',
             disabled: opening === 'open',
             onClick: function () {
               setOpening('open');
@@ -1011,21 +1011,21 @@
             },
           }, '在格式匠中查看报告'),
           h('button', {
-            className: 'fj-btn',
+            className: 'geshijiang-btn',
             disabled: !runId,
             onClick: function () {
               copyText(String(runId)).then(function (done) { setCopied(done ? '已复制运行 ID' : '复制失败'); });
             },
           }, copied || '复制运行 ID'),
-          h('span', { className: 'fj-grow' }),
-          h('span', { className: 'fj-k' }, runId ? '报告按运行 ID 查找' : ''),
+          h('span', { className: 'geshijiang-grow' }),
+          h('span', { className: 'geshijiang-k' }, runId ? '报告按运行 ID 查找' : ''),
         ));
 
         return h(ToolShell, null, children);
       }
 
       function stat(value, label, color) {
-        return h('div', { key: label, className: 'fj-stat' },
+        return h('div', { key: label, className: 'geshijiang-stat' },
           h('b', { style: { color: color } }, String(value)),
           h('span', null, label),
         );
@@ -1036,11 +1036,11 @@
        * ------------------------------------------------------------------ */
 
       function Step(props) {
-        return h('div', { className: 'fj-step' },
-          h('span', { className: props.done ? 'fj-step-no is-done' : 'fj-step-no' }, props.done ? '✓' : String(props.index)),
-          h('div', { className: 'fj-step-body' },
-            h('div', { className: 'fj-step-title' }, props.title),
-            props.hint ? h('div', { className: 'fj-step-hint' }, props.hint) : null,
+        return h('div', { className: 'geshijiang-step' },
+          h('span', { className: props.done ? 'geshijiang-step-no is-done' : 'geshijiang-step-no' }, props.done ? '✓' : String(props.index)),
+          h('div', { className: 'geshijiang-step-body' },
+            h('div', { className: 'geshijiang-step-title' }, props.title),
+            props.hint ? h('div', { className: 'geshijiang-step-hint' }, props.hint) : null,
           ),
         );
       }
@@ -1052,7 +1052,7 @@
        * 动作与插件页共用同一套 useConnectionActions，行为不会两处不一致。
        */
       function SettingsPanel() {
-        var source = useFormatjiangState(true);
+        var source = useGeshijiangState(true);
         var state = source.state;
         var setState = source.setState;
         var actions = useConnectionActions(setState);
@@ -1061,7 +1061,7 @@
           return h(StatusPlaceholder, { error: source.error, onRetry: source.retry, page: true });
         }
 
-        var f = state.formatjiang || {};
+        var f = state.geshijiang || {};
         var server = state.server || {};
         var connected = server.state === 'connected';
         // 桥接交给预设时，「连没连上」这件事不在这个面板里：本会话没选那个预设就看不到工具，
@@ -1139,20 +1139,20 @@
           row('连接方式', 'stdio 桥接', 'bridge'),
         ];
 
-        return h('div', { className: 'fj fj-page' },
+        return h('div', { className: 'geshijiang geshijiang-page' },
           h(Style),
-          h('div', { className: 'fj-card' },
-            h('div', { className: 'fj-head' },
-              h('span', { className: 'fj-title' }, '格式匠论文助手'),
-              h('span', { className: toneClass(state.tone) }, h('span', { className: 'fj-dot' }), state.label),
-              h('span', { className: 'fj-right' }, state.pluginVersion ? 'v' + state.pluginVersion : ''),
+          h('div', { className: 'geshijiang-card' },
+            h('div', { className: 'geshijiang-head' },
+              h('span', { className: 'geshijiang-title' }, '格式匠论文助手'),
+              h('span', { className: toneClass(state.tone) }, h('span', { className: 'geshijiang-dot' }), state.label),
+              h('span', { className: 'geshijiang-right' }, state.pluginVersion ? 'v' + state.pluginVersion : ''),
             ),
-            h('div', { className: 'fj-lead' }, presetScope
+            h('div', { className: 'geshijiang-lead' }, presetScope
               ? '这里管格式匠本身：程序、数据目录、本机接入与 MCP 服务。格式匠的工具挂在「格式匠」预设上，新建会话时选那个预设就会加载。'
               : offScope
                 ? '这里管格式匠本身：程序、数据目录、本机接入与 MCP 服务。桥接在插件配置里关着（mountScope: off），格式匠工具需要在别处自己配。'
                 : '把本机格式匠的论文工具接进对话：套版、提交检查、资料与页码取证。下面三步走完就能用。'),
-            h('div', { className: 'fj-body' }, h('div', { className: 'fj-group' }, steps)),
+            h('div', { className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' }, steps)),
             connected || state.catalog
               ? h(CatalogBlock, {
                 catalog: state.catalog,
@@ -1160,41 +1160,41 @@
                 onRefresh: actions.refreshCatalog,
               })
               : null,
-            h('div', { className: 'fj-foot' },
+            h('div', { className: 'geshijiang-foot' },
               h('button', {
-                className: 'fj-btn fj-btn-primary',
+                className: 'geshijiang-btn geshijiang-btn-primary',
                 disabled: actions.pending === '/open' || !f.executable,
                 onClick: function () { actions.run('/open'); },
               }, '打开格式匠'),
               presetScope || offScope ? null : h('button', {
-                className: 'fj-btn',
+                className: 'geshijiang-btn',
                 disabled: actions.pending === '/connect',
                 onClick: function () { actions.run('/connect'); },
               }, '重新连接'),
               presetScope || offScope ? null : (connected
                 ? h('button', {
-                  className: 'fj-btn fj-btn-text',
+                  className: 'geshijiang-btn geshijiang-btn-text',
                   disabled: actions.pending === '/disconnect',
                   onClick: function () { actions.run('/disconnect'); },
                 }, '断开连接')
                 : null),
-              h('span', { className: 'fj-grow' }),
-              h('button', { className: 'fj-btn fj-btn-text', onClick: actions.copyDiagnostics }, actions.copyState || '复制诊断信息'),
+              h('span', { className: 'geshijiang-grow' }),
+              h('button', { className: 'geshijiang-btn geshijiang-btn-text', onClick: actions.copyDiagnostics }, actions.copyState || '复制诊断信息'),
             ),
-            actions.notice ? h('div', { className: 'fj-note' }, actions.notice) : null,
+            actions.notice ? h('div', { className: 'geshijiang-note' }, actions.notice) : null,
           ),
           h('div', { style: { marginTop: 18 } },
-            h('div', { className: 'fj-k', style: { marginBottom: 6 } }, '在对话里怎么用'),
-            h('div', { className: 'fj-card' }, h('ul', { className: 'fj-list' },
+            h('div', { className: 'geshijiang-k', style: { marginBottom: 6 } }, '在对话里怎么用'),
+            h('div', { className: 'geshijiang-card' }, h('ul', { className: 'geshijiang-list' },
               h('li', { key: 'u1' }, '套版：说「用××模板套一下第 12 版」，方案卡出来后会直接建分支，不覆盖源文件。'),
               h('li', { key: 'u2' }, '提交检查：说「跑一遍提交检查，按学位论文方案」，卡片里可以只看错误。'),
               h('li', { key: 'u3' }, '取证：问「这句引文出自哪篇文献、哪一页」。'),
-              h('li', { key: 'u4' }, '排障：输入 /formatjiang 诊断，复制出来的信息不含令牌。'),
+              h('li', { key: 'u4' }, '排障：输入 /geshijiang 诊断，复制出来的信息不含令牌。'),
             )),
           ),
           h('div', { style: { marginTop: 18 } },
-            h('div', { className: 'fj-k', style: { marginBottom: 6 } }, '本机信息'),
-            h('div', { className: 'fj-card' }, h('div', { className: 'fj-body' }, h('div', { className: 'fj-group' }, info))),
+            h('div', { className: 'geshijiang-k', style: { marginBottom: 6 } }, '本机信息'),
+            h('div', { className: 'geshijiang-card' }, h('div', { className: 'geshijiang-body' }, h('div', { className: 'geshijiang-group' }, info))),
           ),
         );
       }
@@ -1206,7 +1206,7 @@
        * 宿主按 { size, active } 调这个函数并直接渲染返回的元素，所以这里不能有 hook。
        * 图形是一只纸页加两行正文，和「文档 + 版式」这件事对得上，也避开了齿轮那套通用图标。
        */
-      function FormatjiangIcon(props) {
+      function GeshijiangIcon(props) {
         var size = (props && props.size) || 16;
         var stroke = (props && props.active) ? 1.7 : 1.4;
         return h('svg', {
@@ -1251,23 +1251,23 @@
           }));
           // 设置侧栏入口：插件详情页不好找，设置里给一个同名管理页。
           offs.push(ctx.slots.inject('settings.section', function () {
-            return ctx.slots.register({ name: 'settings.section', id: 'formatjiang', order: 26, label: '格式匠' }, SettingsPage);
+            return ctx.slots.register({ name: 'settings.section', id: 'geshijiang', order: 26, label: '格式匠' }, SettingsPage);
           }));
           // 侧栏图标按分节 id 匹配，没有这条就退回宿主的通用齿轮。
           offs.push(ctx.slots.inject('settings.section.icon', function () {
-            return ctx.slots.register({ name: 'settings.section.icon', id: 'formatjiang', order: 26, label: '格式匠' }, FormatjiangIcon);
+            return ctx.slots.register({ name: 'settings.section.icon', id: 'geshijiang', order: 26, label: '格式匠' }, GeshijiangIcon);
           }));
-          ['formatjiang_status', 'formatjiang_connect', 'formatjiang_open', 'formatjiang_diagnostics']
+          ['geshijiang_status', 'geshijiang_connect', 'geshijiang_open', 'geshijiang_diagnostics']
             .forEach(function (toolName) {
               offs.push(ctx.slots.inject('tool.call.toolview', function () {
                 return ctx.slots.register({ name: 'tool.call.toolview', key: toolName }, statusRow(toolName));
               }));
             });
           offs.push(ctx.slots.inject('tool.call.toolview', function () {
-            return ctx.slots.register({ name: 'tool.call.toolview', key: 'mcp__formatjiang__preview_layout_plan' }, PlanCard);
+            return ctx.slots.register({ name: 'tool.call.toolview', key: 'mcp__geshijiang__preview_layout_plan' }, PlanCard);
           }));
           // 诊断结果与问题清单是同一份数据的不同入口，用同一张卡，避免两套渲染各说各话。
-          ['mcp__formatjiang__run_paper_diagnostic', 'mcp__formatjiang__list_findings']
+          ['mcp__geshijiang__run_paper_diagnostic', 'mcp__geshijiang__list_findings']
             .forEach(function (toolName) {
               offs.push(ctx.slots.inject('tool.call.toolview', function () {
                 return ctx.slots.register({ name: 'tool.call.toolview', key: toolName }, DiagnosticCard);
@@ -1276,7 +1276,7 @@
           return function () {
             offs.forEach(function (off) { if (typeof off === 'function') off(); });
           };
-        }, 'formatjiang: slots');
+        }, 'geshijiang: slots');
       }
 
       return { inject: ['slots'], apply: apply };

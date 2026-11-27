@@ -10,10 +10,10 @@ import path from 'node:path';
 
 // 两份实例通过一个临时文件交接状态。测试必须换到自己的目录：
 // 否则会写进真实宿主那份，把用户机器上的预设桥接记录带偏。
-process.env.FORMATJIANG_STATE_FILE = path.join(os.tmpdir(), `dsh-formatjiang-test-${process.pid}`, 'state.json');
+process.env.GESHIJIANG_STATE_FILE = path.join(os.tmpdir(), `dsh-geshijiang-test-${process.pid}`, 'state.json');
 
 // 打开工具会等格式匠的端口就绪：测试里把它压到 1.2 秒，别让每条用例都等满 25 秒。
-process.env.FORMATJIANG_OPEN_WAIT_MS = '1200';
+process.env.GESHIJIANG_OPEN_WAIT_MS = '1200';
 
 registerHooks({
   resolve(specifier, context, nextResolve) {

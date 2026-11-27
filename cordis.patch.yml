@@ -1,11 +1,11 @@
-# @local/formatjiang-assistant bundle patch
+# @local/geshijiang-assistant bundle patch
 #
 # config 是唯一可调入口（升级插件不会覆盖这里）。
-#   executablePath   格式匠程序路径。留空 = 依次试 FORMATJIANG_HOME、桌面 formatjiang 目录、
-#                    %LOCALAPPDATA%\Programs\formatjiang、%ProgramFiles%\formatjiang。
+#   executablePath   格式匠程序路径。留空 = 依次试 GESHIJIANG_HOME、桌面 geshijiang 目录、
+#                    %LOCALAPPDATA%\Programs\geshijiang、%ProgramFiles%\geshijiang。
 #   installationId   格式匠「客户端接入」里的安装 ID（ins_ 开头）。留空 = 从格式匠数据库里
 #                    自动挑一条可用的本机 stdio 安装（优先客户端类型为 dsh 的最新一条）。
-#   dataDir          格式匠数据目录。留空 = 环境变量 FORMATJIANG_DATA_DIR，其次 <用户主目录>/formatjiang-data。
+#   dataDir          格式匠数据目录。留空 = 环境变量 GESHIJIANG_DATA_DIR，其次 <用户主目录>/geshijiang-data。
 #   startupTimeoutMs 首次拉起格式匠并等到桥接可用的上限，默认 90000。
 #   toolCallTimeoutMs 单次工具调用超时，默认 270000。格式匠网关自身的写超时是 5 分钟，
 #                    这里留 30 秒余量，超过 5 分钟的调用在格式匠一侧一定会被掐断。
@@ -21,8 +21,8 @@
 # mcpManager 由 DSH 内置的 @deepseek-ai/dsh-mcp-client 提供；官方 profile 默认已加载。
 # 如果某个 profile 关掉了它，本插件只会报「没有 mcpManager」，不会自己再插一份。
 - insert:
-    - id: formatjiang-assistant
-      name: '@local/formatjiang-assistant'
+    - id: geshijiang-assistant
+      name: '@local/geshijiang-assistant'
       config:
         executablePath: ''
         installationId: ''

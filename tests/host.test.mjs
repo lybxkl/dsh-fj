@@ -36,7 +36,7 @@ function makeCtx({ missing = [], loader = null, baseUrl = '', pluginStatus = nul
     warnings: [],
   };
   let live = 0;
-  const serverView = { name: 'formatjiang', configured: true, status: { state: 'connected', toolCount: 32, connectedAt: Date.now() } };
+  const serverView = { name: 'geshijiang', configured: true, status: { state: 'connected', toolCount: 32, connectedAt: Date.now() } };
   const ctx = {
     logger: {
       warn: (msg) => record.warnings.push(String(msg)),
@@ -217,7 +217,7 @@ async function call(route, options) {
 }
 
 test('挂载参数与工具面符合桥接契约', () => {
-  assert.equal(plugin.name, 'formatjiang-assistant');
+  assert.equal(plugin.name, 'geshijiang-assistant');
   // 只有 tools 是硬依赖：mcpManager/webServer 改成「等到了再装配」，
   // 否则服务晚启动时整个插件会停在 pending，工具与面板一起消失。
   assert.deepEqual(plugin.inject, ['tools']);
@@ -226,7 +226,7 @@ test('挂载参数与工具面符合桥接契约', () => {
   const { ctx, record } = makeCtx();
   plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_test0001' });
   assert.equal(record.mounts.length, 1);
-  assert.equal(record.mounts[0].name, 'formatjiang');
+  assert.equal(record.mounts[0].name, 'geshijiang');
   assert.equal(record.mounts[0].entry.transport, 'stdio');
   assert.equal(record.mounts[0].entry.command, EXE);
   assert.deepEqual(record.mounts[0].entry.args, ['mcp', 'bridge', '--installation-id', 'ins_test0001']);
@@ -235,7 +235,7 @@ test('挂载参数与工具面符合桥接契约', () => {
 
   assert.deepEqual(
     record.tools.map((tool) => tool.name),
-    ['formatjiang_status', 'formatjiang_connect', 'formatjiang_disconnect', 'formatjiang_open', 'formatjiang_diagnostics', 'formatjiang_catalog', 'formatjiang_stage_attachment', 'formatjiang_session', 'formatjiang_import_document', 'formatjiang_receive_manuscript', 'formatjiang_use_attachments', 'formatjiang_save_file'],
+    ['geshijiang_status', 'geshijiang_connect', 'geshijiang_disconnect', 'geshijiang_open', 'geshijiang_diagnostics', 'geshijiang_catalog', 'geshijiang_stage_attachment', 'geshijiang_session', 'geshijiang_import_document', 'geshijiang_receive_manuscript', 'geshijiang_use_attachments', 'geshijiang_save_file'],
   );
   for (const tool of record.tools) {
     assert.equal(typeof tool.execute, 'function');
@@ -245,10 +245,10 @@ test('挂载参数与工具面符合桥接契约', () => {
 
   assert.equal(record.prompts.length, 1);
   assert.equal(record.prompts[0].interpolate, false);
-  assert.match(record.prompts[0].text, /mcp__formatjiang__/);
+  assert.match(record.prompts[0].text, /mcp__geshijiang__/);
 
   assert.equal(record.commands.length, 1);
-  assert.equal(record.commands[0].name, 'formatjiang');
+  assert.equal(record.commands[0].name, 'geshijiang');
 });
 
 /**
@@ -285,7 +285,7 @@ test('系统提示节符合宿主的 PromptSection 契约', () => {
   assert.equal(section.content, undefined, 'content 不是宿主字段，写了也读不到');
 
   const rendered = renderPromptLikeHost(record.prompts);
-  assert.match(rendered, /mcp__formatjiang__/);
+  assert.match(rendered, /mcp__geshijiang__/);
   assert.doesNotMatch(rendered, /\bundefined\b/);
 });
 
@@ -298,21 +298,40 @@ test('宿主 renderPrompt 契约：分节缺 text 时会以 reading "length" 崩
   );
 });
 
-test('配置里写的程序路径无效时回退到安装位置', () => {
-  const { ctx, record } = makeCtx();
-  plugin.apply(ctx, { executablePath: 'D:\\nope\\不存在.exe', installationId: 'ins_test0002' });
-  assert.equal(record.mounts.length, 1, '应当回退到自动发现到的格式匠程序');
-  const command = record.mounts[0].entry.command;
-  assert.ok(command.endsWith('格式匠.exe'), `发现到的程序不对：${command}`);
-  assert.ok(fs.existsSync(command));
+test('配置路径无效时从 GESHIJIANG_HOME 发现安装版和发布页便携版', (t) => {
+  const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-install-'));
+  const installed = path.join(installDir, '格式匠.exe');
+  const portable = path.join(installDir, 'geshijiang-windows-amd64.exe');
+  fs.writeFileSync(portable, '');
+  fs.writeFileSync(installed, '');
+  const previousHome = process.env.GESHIJIANG_HOME;
+  process.env.GESHIJIANG_HOME = installDir;
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.GESHIJIANG_HOME;
+    else process.env.GESHIJIANG_HOME = previousHome;
+    if (fs.existsSync(installed)) fs.unlinkSync(installed);
+    fs.unlinkSync(portable);
+    fs.rmdirSync(installDir);
+  });
+  const config = { executablePath: path.join(installDir, '不存在.exe'), installationId: 'ins_test0002' };
+  const installedHost = makeCtx();
+  plugin.apply(installedHost.ctx, config);
+  assert.equal(installedHost.record.mounts.length, 1);
+  assert.equal(installedHost.record.mounts[0].entry.command, installed);
+
+  fs.unlinkSync(installed);
+  const portableHost = makeCtx();
+  plugin.apply(portableHost.ctx, config);
+  assert.equal(portableHost.record.mounts.length, 1);
+  assert.equal(portableHost.record.mounts[0].entry.command, portable);
 });
 
 test('找不到可用安装时不挂载，并把原因写清楚', async () => {
-  const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-empty-'));
+  const emptyDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-empty-'));
   const { ctx, record } = makeCtx();
   plugin.apply(ctx, { executablePath: EXE, installationId: '', dataDir: emptyDataDir });
   assert.equal(record.mounts.length, 0);
-  const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+  const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
   const value = await status.execute({});
   assert.equal(value.ok, false);
   assert.match(value.text, /没有找到格式匠数据库/);
@@ -323,11 +342,11 @@ test('找不到可用安装时不挂载，并把原因写清楚', async () => {
 test('面板接口只服务本机同源页面', async () => {
   const { ctx, record } = makeCtx();
   plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_test0003' });
-  const route = record.routes.find((item) => item.path === '/formatjiang/api');
-  assert.ok(route, '没有注册 /formatjiang/api');
+  const route = record.routes.find((item) => item.path === '/geshijiang/api');
+  assert.ok(route, '没有注册 /geshijiang/api');
   assert.equal(route.kind, 'prefix');
 
-  const state = await call(route, { url: '/formatjiang/api/state', headers: { host: '127.0.0.1:5173' } });
+  const state = await call(route, { url: '/geshijiang/api/state', headers: { host: '127.0.0.1:5173' } });
   assert.equal(state.status, 200);
   assert.equal(state.json.ok, true);
   assert.equal(state.json.state.label, '已连接');
@@ -335,7 +354,7 @@ test('面板接口只服务本机同源页面', async () => {
 
   const sameOrigin = await call(route, {
     method: 'POST',
-    url: '/formatjiang/api/connect',
+    url: '/geshijiang/api/connect',
     headers: { host: '127.0.0.1:5173', origin: 'http://127.0.0.1:5173', 'content-type': 'application/json' },
     body: '{"restart":true}',
   });
@@ -343,15 +362,15 @@ test('面板接口只服务本机同源页面', async () => {
   assert.ok(sameOrigin.json.ok);
 
   const crossOrigin = await call(route, {
-    url: '/formatjiang/api/state',
+    url: '/geshijiang/api/state',
     headers: { host: '127.0.0.1:5173', origin: 'http://evil.example' },
   });
   assert.equal(crossOrigin.status, 403);
 
-  const remoteHost = await call(route, { url: '/formatjiang/api/state', headers: { host: 'evil.example' } });
+  const remoteHost = await call(route, { url: '/geshijiang/api/state', headers: { host: 'evil.example' } });
   assert.equal(remoteHost.status, 403);
 
-  const missing = await call(route, { method: 'POST', url: '/formatjiang/api/nothing', headers: { host: '127.0.0.1:5173' }, body: '{}' });
+  const missing = await call(route, { method: 'POST', url: '/geshijiang/api/nothing', headers: { host: '127.0.0.1:5173' }, body: '{}' });
   assert.equal(missing.status, 404);
 });
 
@@ -376,7 +395,7 @@ test('工作流技能符合宿主的运行时技能契约', () => {
 test('诊断信息只含状态与路径，不含令牌', async () => {
   const { ctx, record } = makeCtx();
   plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_test0006' });
-  const tool = record.tools.find((item) => item.name === 'formatjiang_diagnostics');
+  const tool = record.tools.find((item) => item.name === 'geshijiang_diagnostics');
   const value = await tool.execute({});
   assert.match(value.text, /格式匠论文助手/);
   assert.match(value.text, /ins_test0006/);
@@ -384,8 +403,8 @@ test('诊断信息只含状态与路径，不含令牌', async () => {
   assert.match(value.text, /桥接：stdio/);
   assert.doesNotMatch(value.text, /token/i);
 
-  const route = record.routes.find((item) => item.path === '/formatjiang/api');
-  const diagnostics = await call(route, { url: '/formatjiang/api/diagnostics', headers: { host: '127.0.0.1:5173' } });
+  const route = record.routes.find((item) => item.path === '/geshijiang/api');
+  const diagnostics = await call(route, { url: '/geshijiang/api/diagnostics', headers: { host: '127.0.0.1:5173' } });
   assert.equal(diagnostics.status, 200);
   assert.match(diagnostics.json.text, /接入状态/);
 });
@@ -411,18 +430,18 @@ test('命令支持诊断与重连两个参数', () => {
 test('打开失败不抛未捕获异常，而是变成可读的错误', async () => {
   // 指向一个存在但不可执行的文本文件：spawn 会以同步异常或 'error' 事件失败，
   // 两种都必须被接住——没接住的话整个宿主进程会崩。
-  const bogus = path.join(os.tmpdir(), `fj-bogus-${process.pid}.txt`);
+  const bogus = path.join(os.tmpdir(), `geshijiang-bogus-${process.pid}.txt`);
   fs.writeFileSync(bogus, 'not an executable');
   try {
     const { ctx, record } = makeCtx();
     plugin.apply(ctx, { executablePath: bogus, installationId: 'ins_test0008' });
-    const open = record.tools.find((item) => item.name === 'formatjiang_open');
+    const open = record.tools.find((item) => item.name === 'geshijiang_open');
     const value = await open.execute({});
     assert.equal(value.ok, false);
     assert.match(value.text, /打开格式匠失败/);
 
     // 失败原因要进状态，不能只留在一次返回值里。
-    const status = record.tools.find((item) => item.name === 'formatjiang_status');
+    const status = record.tools.find((item) => item.name === 'geshijiang_status');
     const snap = await status.execute({});
     assert.ok(snap.hints.some((hint) => /打开格式匠失败/.test(hint)), `状态里缺少打开失败：${JSON.stringify(snap.hints)}`);
   } finally {
@@ -431,7 +450,7 @@ test('打开失败不抛未捕获异常，而是变成可读的错误', async ()
 });
 
 test('打开格式匠会等到端口就绪，并在状态里立刻体现', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-open-ready-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-open-ready-'));
   const server = net.createServer();
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
@@ -440,21 +459,21 @@ test('打开格式匠会等到端口就绪，并在状态里立刻体现', async
     const { ctx, record } = makeCtx();
     // 用 node 自己当「桌面程序」：stdio 被忽略，进程起来就退，不会真的打开窗口。
     plugin.apply(ctx, { executablePath: process.execPath, installationId: 'ins_open_ready', dataDir: dir, autoReconnect: false });
-    const open = record.tools.find((item) => item.name === 'formatjiang_open');
+    const open = record.tools.find((item) => item.name === 'geshijiang_open');
     // spawn 的调用被替身记了下来：拉起桌面时必须带「后台」环境变量，
     // 否则模型一调工具就把窗口弹到最前面挡住用户。
-    globalThis.__fjSpawnCalls = [];
+    globalThis.__geshijiangSpawnCalls = [];
     const value = await open.execute({});
     assert.equal(value.ok, true, value.text);
     assert.match(value.text, new RegExp(`端口 ${port} 已经在听`));
-    const launched = (globalThis.__fjSpawnCalls || []).find((item) => item.file === process.execPath);
-    assert.ok(launched, `没有拉起桌面程序：${JSON.stringify(globalThis.__fjSpawnCalls)}`);
-    assert.equal(launched.options?.env?.FORMATJIANG_LAUNCH_BACKGROUND, '1', '拉起桌面时必须声明后台启动');
+    const launched = (globalThis.__geshijiangSpawnCalls || []).find((item) => item.file === process.execPath);
+    assert.ok(launched, `没有拉起桌面程序：${JSON.stringify(globalThis.__geshijiangSpawnCalls)}`);
+    assert.equal(launched.options?.env?.GESHIJIANG_LAUNCH_BACKGROUND, '1', '拉起桌面时必须声明后台启动');
 
     // 刚测到的事实要写进状态，紧接着的状态查询不能再报旧值。
-    const status = record.tools.find((item) => item.name === 'formatjiang_status');
+    const status = record.tools.find((item) => item.name === 'geshijiang_status');
     const snap = await status.execute({});
-    assert.equal(snap.formatjiang.listening, true);
+    assert.equal(snap.geshijiang.listening, true);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     fs.rmSync(dir, { recursive: true, force: true });
@@ -462,7 +481,7 @@ test('打开格式匠会等到端口就绪，并在状态里立刻体现', async
 });
 
 test('两个会话同时打开时只启动一次，后到的复用同一次结果', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-open-once-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-open-once-'));
   const server = net.createServer();
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
@@ -470,7 +489,7 @@ test('两个会话同时打开时只启动一次，后到的复用同一次结�
   try {
     const { ctx, record } = makeCtx();
     plugin.apply(ctx, { executablePath: process.execPath, installationId: 'ins_open_once', dataDir: dir, autoReconnect: false });
-    const open = record.tools.find((item) => item.name === 'formatjiang_open');
+    const open = record.tools.find((item) => item.name === 'geshijiang_open');
     const [first, second] = await Promise.all([open.execute({}), open.execute({})]);
     assert.equal(first, second, '两次调用应当复用同一个结果对象');
     assert.equal(first.ok, true, first.text);
@@ -481,7 +500,7 @@ test('两个会话同时打开时只启动一次，后到的复用同一次结�
 });
 
 test('打开后端口等不到就绪时照实说，不把「已请求」讲成「已就绪」', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-open-slow-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-open-slow-'));
   // 先占一个端口再关掉：配置里写的是「没人听」的端口。
   const probe = net.createServer();
   await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve));
@@ -491,11 +510,11 @@ test('打开后端口等不到就绪时照实说，不把「已请求」讲成�
   try {
     const { ctx, record } = makeCtx();
     plugin.apply(ctx, { executablePath: process.execPath, installationId: 'ins_open_slow', dataDir: dir, autoReconnect: false });
-    const open = record.tools.find((item) => item.name === 'formatjiang_open');
+    const open = record.tools.find((item) => item.name === 'geshijiang_open');
     const value = await open.execute({});
     assert.equal(value.ok, false, value.text);
     assert.match(value.text, /没有就绪/);
-    assert.match(value.text, /formatjiang_status/);
+    assert.match(value.text, /geshijiang_status/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -507,7 +526,7 @@ test('面板请求体超限返回 413，且不触发重连', async () => {  cons
   const oversized = JSON.stringify({ pad: 'x'.repeat(70 * 1024) });
   const result = await call(route, {
     method: 'POST',
-    url: '/formatjiang/api/connect',
+    url: '/geshijiang/api/connect',
     headers: { host: '127.0.0.1:5173', 'content-type': 'application/json' },
     body: oversized,
   });
@@ -528,15 +547,15 @@ test('挂载失败只报错，再次重连可以恢复', async () => {
   };
 
   plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_test0010' });
-  const status = record.tools.find((item) => item.name === 'formatjiang_status');
+  const status = record.tools.find((item) => item.name === 'geshijiang_status');
   const failed = await status.execute({});
   assert.equal(failed.ok, false);
   assert.match(failed.text, /需要修复|already exists/);
 
-  const connect = record.tools.find((item) => item.name === 'formatjiang_connect');
+  const connect = record.tools.find((item) => item.name === 'geshijiang_connect');
   const recovered = await connect.execute({});
   assert.equal(recovered.ok, true);
-  assert.equal(record.mounts.filter((item) => item.name === 'formatjiang').length, 1);
+  assert.equal(record.mounts.filter((item) => item.name === 'geshijiang').length, 1);
 });
 
 /* ------------------------- 自动重连 ------------------------- */
@@ -636,7 +655,7 @@ test('状态接口给出自动重连进度', async () => {
   captureTimers((timers) => withClock(1_700_000_000_000, (clock) => {
     const { ctx, record, serverView } = makeCtx();
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_auto004' });
-    const route = record.routes.find((item) => item.path === '/formatjiang/api');
+    const route = record.routes.find((item) => item.path === '/geshijiang/api');
     return (async () => {
       let body = await call(route, {});
       assert.equal(body.json.state.auto.enabled, true);
@@ -667,7 +686,7 @@ test('插件卸载时停掉守护定时器并卸掉桥接', () => {
 
 test('安装更新期间不重挂，标记摘掉后自动恢复', () => {
   captureTimers((timers) => withClock(1_700_000_000_000, () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-update-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-update-'));
     const exe = path.join(dir, '格式匠.exe');
     const marker = path.join(dir, 'update-in-progress.marker');
     fs.writeFileSync(exe, '');
@@ -693,7 +712,7 @@ test('用户退出后手动打开格式匠，端口通了就自动接上', async
   const server = net.createServer((socket) => socket.end());
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-gateway-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-gateway-'));
   fs.writeFileSync(path.join(dir, 'mcp_settings.json'), JSON.stringify({ enabled: true, port }), 'utf8');
   try {
     await captureTimers(async (timers) => {
@@ -712,7 +731,7 @@ test('用户退出后手动打开格式匠，端口通了就自动接上', async
 });
 
 test('用户退出且格式匠没开时保持安静', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-gateway-off-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-gateway-off-'));
   fs.writeFileSync(path.join(dir, 'mcp_settings.json'), JSON.stringify({ enabled: true, port: 1 }), 'utf8');
   try {
     await captureTimers(async (timers) => {
@@ -742,7 +761,7 @@ test('手动重连后重新记一轮，不会被之前用尽的次数卡住', as
       tick();
       assert.equal(record.mounts.length, 4, '三次自动重连已经用尽');
 
-      const connect = record.tools.find((item) => item.name === 'formatjiang_connect');
+      const connect = record.tools.find((item) => item.name === 'geshijiang_connect');
       await connect.execute({ restart: true });
       assert.equal(record.mounts.length, 5, '手动重连仍然有效');
 
@@ -757,11 +776,11 @@ test('手动重连后重新记一轮，不会被之前用尽的次数卡住', as
 /* ------------------------- 能力清单 ------------------------- */
 
 function stubDescribe(payload) {
-  globalThis.__fjExecCalls = [];
-  globalThis.__fjExec = {
+  globalThis.__geshijiangExecCalls = [];
+  globalThis.__geshijiangExec = {
     respond(record, callback) {
       if (payload instanceof Error) {
-        callback(payload, '', 'formatjiang mcp describe: 未知子命令');
+        callback(payload, '', 'geshijiang mcp describe: 未知子命令');
         return;
       }
       callback(null, JSON.stringify(payload) + '\n', '');
@@ -770,8 +789,8 @@ function stubDescribe(payload) {
 }
 
 function clearDescribe() {
-  delete globalThis.__fjExec;
-  delete globalThis.__fjExecCalls;
+  delete globalThis.__geshijiangExec;
+  delete globalThis.__geshijiangExecCalls;
 }
 
 const CATALOG_PAYLOAD = {
@@ -781,9 +800,9 @@ const CATALOG_PAYLOAD = {
     { name: 'list_papers', description: '列出论文' },
     { name: 'run_paper_diagnostic', description: '提交检查' },
   ],
-  resources: [{ uri: 'formatjiang://paper/1', name: '论文 1' }],
-  resourceTemplates: [{ uriTemplate: 'formatjiang://paper/{id}', name: '论文' }],
-  prompts: [{ name: 'formatjiang/thesis' }],
+  resources: [{ uri: 'geshijiang://paper/1', name: '论文 1' }],
+  resourceTemplates: [{ uriTemplate: 'geshijiang://paper/{id}', name: '论文' }],
+  prompts: [{ name: 'geshijiang/thesis' }],
   truncated: false,
   durationMs: 89,
 };
@@ -794,14 +813,14 @@ test('连上之后把工具、资源、模板与提示词的数量读回来', as
     const { ctx, record } = makeCtx();
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_cat0001' });
     await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.equal(globalThis.__fjExecCalls.length, 0, '挂载时不主动读，避免和桥接抢着拉起格式匠');
+    assert.equal(globalThis.__geshijiangExecCalls.length, 0, '挂载时不主动读，避免和桥接抢着拉起格式匠');
 
-    const tool = record.tools.find((item) => item.name === 'formatjiang_catalog');
+    const tool = record.tools.find((item) => item.name === 'geshijiang_catalog');
     await tool.execute({});
-    assert.equal(globalThis.__fjExecCalls.length, 1, '连上之后按需读一次清单');
-    assert.deepEqual(globalThis.__fjExecCalls[0].args, ['mcp', 'describe', '--installation-id', 'ins_cat0001']);
+    assert.equal(globalThis.__geshijiangExecCalls.length, 1, '连上之后按需读一次清单');
+    assert.deepEqual(globalThis.__geshijiangExecCalls[0].args, ['mcp', 'describe', '--installation-id', 'ins_cat0001']);
 
-    const route = record.routes.find((item) => item.path === '/formatjiang/api');
+    const route = record.routes.find((item) => item.path === '/geshijiang/api');
     const body = await call(route, {});
     const catalog = body.json.state.catalog;
     assert.equal(catalog.error, '');
@@ -824,10 +843,10 @@ test('格式匠版本太旧时清单报错，而不是假装没有资源', async
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_cat0002' });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const tool = record.tools.find((item) => item.name === 'formatjiang_catalog');
+    const tool = record.tools.find((item) => item.name === 'geshijiang_catalog');
     const result = await tool.execute({});
 
-    const route = record.routes.find((item) => item.path === '/formatjiang/api');
+    const route = record.routes.find((item) => item.path === '/geshijiang/api');
     const body = await call(route, {});
     assert.match(body.json.state.catalog.error, /未知子命令/);
     assert.equal(body.json.state.catalog.data, null);
@@ -839,23 +858,23 @@ test('格式匠版本太旧时清单报错，而不是假装没有资源', async
   }
 });
 
-test('formatjiang_catalog 给出四类数量，强制刷新会再问一次', async () => {
+test('geshijiang_catalog 给出四类数量，强制刷新会再问一次', async () => {
   stubDescribe(CATALOG_PAYLOAD);
   try {
     const { ctx, record } = makeCtx();
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_cat0003' });
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const tool = record.tools.find((item) => item.name === 'formatjiang_catalog');
+    const tool = record.tools.find((item) => item.name === 'geshijiang_catalog');
     const cached = await tool.execute({});
     assert.equal(cached.ok, true);
     assert.match(cached.text, /工具 2 个/);
     assert.match(cached.text, /固定资源 1 个/);
     assert.match(cached.text, /提示词 1 个/);
-    assert.equal(globalThis.__fjExecCalls.length, 1, '默认走缓存');
+    assert.equal(globalThis.__geshijiangExecCalls.length, 1, '默认走缓存');
 
     await tool.execute({ refresh: true });
-    assert.equal(globalThis.__fjExecCalls.length, 2, 'refresh 必须重新问一次');
+    assert.equal(globalThis.__geshijiangExecCalls.length, 2, 'refresh 必须重新问一次');
   } finally {
     clearDescribe();
   }
@@ -869,10 +888,10 @@ test('连上之后的轮询补读清单，TTL 内不重复读', async () => {
       plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_cat0004' });
       timers[0].cb();
       await new Promise((resolve) => setTimeout(resolve, 10));
-      assert.equal(globalThis.__fjExecCalls.length, 1, '连上之后补读一次');
+      assert.equal(globalThis.__geshijiangExecCalls.length, 1, '连上之后补读一次');
       timers[0].cb();
       await new Promise((resolve) => setTimeout(resolve, 10));
-      assert.equal(globalThis.__fjExecCalls.length, 1, 'TTL 内不重复读');
+      assert.equal(globalThis.__geshijiangExecCalls.length, 1, 'TTL 内不重复读');
     });
   } finally {
     clearDescribe();
@@ -887,7 +906,7 @@ test('手动断开：卸掉桥接、暂停自动重连，重连后恢复', async
       const tick = timers[0].cb;
       assert.equal(record.mounts.length, 1);
 
-      const disconnect = record.tools.find((item) => item.name === 'formatjiang_disconnect');
+      const disconnect = record.tools.find((item) => item.name === 'geshijiang_disconnect');
       const state = await disconnect.execute({});
       assert.equal(state.ok, true);
       assert.equal(record.unmounts, 1, '断开要真的卸掉桥接');
@@ -901,11 +920,11 @@ test('手动断开：卸掉桥接、暂停自动重连，重连后恢复', async
       tick();
       assert.equal(record.mounts.length, 1, '手动断开之后守护定时器必须安静');
 
-      const connect = record.tools.find((item) => item.name === 'formatjiang_connect');
+      const connect = record.tools.find((item) => item.name === 'geshijiang_connect');
       const resumed = await connect.execute({ restart: true });
       assert.equal(resumed.ok, true);
       assert.equal(record.mounts.length, 2, '重连要重新挂上');
-      const snap = await (record.tools.find((item) => item.name === 'formatjiang_status')).execute({});
+      const snap = await (record.tools.find((item) => item.name === 'geshijiang_status')).execute({});
       assert.equal(snap.paused, false);
     });
   });
@@ -914,8 +933,8 @@ test('手动断开：卸掉桥接、暂停自动重连，重连后恢复', async
 test('面板 /disconnect 同样能断开并报告状态', async () => {
   const { ctx, record } = makeCtx();
   plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_disc0002' });
-  const route = record.routes.find((item) => item.path === '/formatjiang/api');
-  const body = await call(route, { method: 'POST', url: '/formatjiang/api/disconnect', headers: { host: '127.0.0.1:5173' } });
+  const route = record.routes.find((item) => item.path === '/geshijiang/api');
+  const body = await call(route, { method: 'POST', url: '/geshijiang/api/disconnect', headers: { host: '127.0.0.1:5173' } });
   assert.equal(body.status, 200);
   assert.equal(body.json.state.paused, true);
   assert.equal(record.unmounts, 1);
@@ -928,7 +947,7 @@ test('面板 /disconnect 同样能断开并报告状态', async () => {
  * 「重连失败」。这两条都必须在 API 层就分开处理，不能只靠隐藏按钮。
  */
 test('预设模式下 /disconnect 不停宿主通道，/connect 回「不用重连」', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-http-preset-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-http-preset-'));
   const { ctx, record } = makeCtx();
   try {
     plugin.apply(ctx, {
@@ -938,9 +957,9 @@ test('预设模式下 /disconnect 不停宿主通道，/connect 回「不用重�
       mountScope: 'preset',
       autoReconnect: false,
     });
-    const route = record.routes.find((item) => item.path === '/formatjiang/api');
+    const route = record.routes.find((item) => item.path === '/geshijiang/api');
 
-    const off = await call(route, { method: 'POST', url: '/formatjiang/api/disconnect', headers: { host: '127.0.0.1:5173' } });
+    const off = await call(route, { method: 'POST', url: '/geshijiang/api/disconnect', headers: { host: '127.0.0.1:5173' } });
     assert.equal(off.status, 200);
     assert.equal(off.json.state.paused, false, '预设模式没有可断开的连接，不能把 paused 置上');
     assert.equal(off.json.state.hostChannel.ok, true);
@@ -948,7 +967,7 @@ test('预设模式下 /disconnect 不停宿主通道，/connect 回「不用重�
 
     const on = await call(route, {
       method: 'POST',
-      url: '/formatjiang/api/connect',
+      url: '/geshijiang/api/connect',
       headers: { host: '127.0.0.1:5173', 'content-type': 'application/json' },
       body: JSON.stringify({}),
     });
@@ -967,7 +986,7 @@ test('预设模式下 /disconnect 不停宿主通道，/connect 回「不用重�
  * disconnect 也不能假装断开了一条根本不存在的桥接。
  */
 test('mountScope: off 时 connect 与 disconnect 说清「配置关闭」，不套用预设的说法', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-off-scope-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-off-scope-'));
   const { ctx, record } = makeCtx();
   try {
     plugin.apply(ctx, {
@@ -978,18 +997,18 @@ test('mountScope: off 时 connect 与 disconnect 说清「配置关闭」，不�
       autoReconnect: false,
     });
 
-    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
     const snap = await status.execute({});
     assert.match(snap.text, /桥接已关闭/);
     assert.match(snap.text, /mountScope: off/);
 
-    const connect = record.tools.find((tool) => tool.name === 'formatjiang_connect');
+    const connect = record.tools.find((tool) => tool.name === 'geshijiang_connect');
     const result = await connect.execute({});
     assert.equal(result.ok, false);
     assert.match(result.text, /mountScope: off/);
     assert.doesNotMatch(result.text, /官方 mcp 客户端/, 'off 与 preset 是两种配置，不能混用一句话');
 
-    const disconnect = record.tools.find((tool) => tool.name === 'formatjiang_disconnect');
+    const disconnect = record.tools.find((tool) => tool.name === 'geshijiang_disconnect');
     const stopped = await disconnect.execute({});
     assert.equal(stopped.ok, false);
     assert.match(stopped.text, /没有可断开的连接/);
@@ -1002,16 +1021,16 @@ test('mountScope: off 时 connect 与 disconnect 说清「配置关闭」，不�
 
 // 暂存必须拒绝目录跳转，并且正常复制不改用户原件。
 test('附件暂存拒绝路径逃逸并保留原件', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-stage-audit-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-stage-audit-'));
   const { ctx, record } = makeCtx();
   try {
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_stage_audit', dataDir: dir, autoReconnect: false });
-    const stage = record.tools.find(tool => tool.name === 'formatjiang_stage_attachment');
+    const stage = record.tools.find(tool => tool.name === 'geshijiang_stage_attachment');
     const source = path.join(dir, 'source.docx');
     fs.writeFileSync(source, 'document');
     const exec = { agent: { session: { header: { id: 'real-chat-a' } } } };
     let stagedPath = '';
-    globalThis.__fjExec = { respond(record, callback) {
+    globalThis.__geshijiangExec = { respond(record, callback) {
       if (record.args[1] !== 'host') return callback(new Error('非宿主请求'), '', '');
       assert.equal(record.args.at(-1), 'real-chat-a');
       assert.equal(record.input.name, 'receive_file');
@@ -1032,7 +1051,7 @@ test('附件暂存拒绝路径逃逸并保留原件', async () => {
     assert.equal(fs.readFileSync(source, 'utf8'), 'document');
     assert.equal(path.relative(path.join(dir, 'mcp-files', 'inbox'), stagedPath).startsWith('..'), false);
   } finally {
-    delete globalThis.__fjExec;
+    delete globalThis.__geshijiangExec;
     record.disposers.forEach(dispose => dispose());
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -1042,34 +1061,34 @@ test('宿主动作传递取消信号并拒绝伪造保存回执', async () => {
   const { ctx, record } = makeCtx();
   try {
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_host_validation', autoReconnect: false });
-    const save = record.tools.find(tool => tool.name === 'formatjiang_save_file');
+    const save = record.tools.find(tool => tool.name === 'geshijiang_save_file');
     const controller = new AbortController();
     const exec = { agent: { session: { header: { id: 'actual-chat' } } }, signal: controller.signal };
-    const target = path.join(os.tmpdir(), 'fj-saved-output.docx');
+    const target = path.join(os.tmpdir(), 'geshijiang-saved-output.docx');
     for (const response of ['[]', '{}', '{"saved":false}', '{"saved":true,"file_id":"different"}']) {
-      globalThis.__fjExec = { respond(call, done) { assert.equal(call.options.signal, controller.signal); done(null, response, ''); } };
+      globalThis.__geshijiangExec = { respond(call, done) { assert.equal(call.options.signal, controller.signal); done(null, response, ''); } };
       assert.equal((await save.execute({ file_id: 'f_saved', path: target }, exec)).ok, false);
     }
-    globalThis.__fjExec = { respond(call, done) { done(null, JSON.stringify({ saved: true, file_id: 'f_saved', path: target, byte_size: 3, sha256: 'a'.repeat(64) }), ''); } };
+    globalThis.__geshijiangExec = { respond(call, done) { done(null, JSON.stringify({ saved: true, file_id: 'f_saved', path: target, byte_size: 3, sha256: 'a'.repeat(64) }), ''); } };
     assert.equal((await save.execute({ file_id: 'f_saved', path: target }, exec)).ok, true);
     controller.abort();
-    globalThis.__fjExec = { respond() { assert.fail('取消后不能再启动宿主请求'); } };
+    globalThis.__geshijiangExec = { respond() { assert.fail('取消后不能再启动宿主请求'); } };
     assert.equal((await save.execute({ file_id: 'f_saved', path: target }, exec)).ok, false);
   } finally {
-    delete globalThis.__fjExec;
+    delete globalThis.__geshijiangExec;
     record.disposers.forEach(dispose => dispose());
   }
 });
 
 test('附件复制失败时清理本次半成品且保留原件', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-copy-failure-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-copy-failure-'));
   const { ctx, record } = makeCtx();
   const originalCopy = fs.promises.copyFile;
   try {
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_copy_failure', dataDir: dir, autoReconnect: false });
     const source = path.join(dir, 'source.docx'); fs.writeFileSync(source, 'original');
     fs.promises.copyFile = async (from, to) => { await fs.promises.writeFile(to, 'partial'); throw new Error('复制中断'); };
-    const stage = record.tools.find(tool => tool.name === 'formatjiang_stage_attachment');
+    const stage = record.tools.find(tool => tool.name === 'geshijiang_stage_attachment');
     const result = await stage.execute({ path: source }, { agent: { session: { header: { id: 'copy-chat' } } } });
     assert.equal(result.ok, false);
     assert.equal(fs.readFileSync(source, 'utf8'), 'original');
@@ -1108,7 +1127,7 @@ test('mcpManager 没就绪时工具照常装配，状态说明在等服务', asy
   assert.equal(record.mounts.length, 0, '服务没起来时不应当假装挂过桥接');
   assert.equal(record.routes.length, 1, '面板路由与 mcpManager 无关，仍应挂上');
 
-  const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+  const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
   const result = await status.execute({});
   assert.match(result.text, /等待 MCP 客户端服务就绪/);
 });
@@ -1117,14 +1136,14 @@ test('单条工具注册失败只记一笔，其余工具与面板照常', () =>
   const { ctx, record } = makeCtx();
   const realRegister = ctx.tools.register;
   ctx.tools.register = (definition) => {
-    if (definition.name === 'formatjiang_catalog') throw new Error('宿主拒绝了这条工具');
+    if (definition.name === 'geshijiang_catalog') throw new Error('宿主拒绝了这条工具');
     return realRegister(definition);
   };
   plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_onetool' });
 
   assert.equal(record.tools.length, 11, '坏掉的那条不注册，其余照常');
   assert.equal(record.routes.length, 1, '面板路由不应当被一条工具连累');
-  const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+  const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
   assert.ok(status, '状态工具本身不应当被连累');
 });
 
@@ -1136,20 +1155,20 @@ test('单条工具注册失败只记一笔，其余工具与面板照常', () =>
  */
 
 test('端口没在听时状态写「没有监听」，而不是把配置当就绪', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-listen-off-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-listen-off-'));
   // 1 号端口不会有服务在听，探测会立刻失败。
   fs.writeFileSync(path.join(dir, 'mcp_settings.json'), JSON.stringify({ enabled: true, port: 1 }), 'utf8');
   try {
     const { ctx, record } = makeCtx();
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_listen_off', dataDir: dir, autoReconnect: false });
-    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
     // 第一次快照触发端口探测（异步），等结果落地后再取一次同样的状态。
     await status.execute({});
     await new Promise((resolve) => setTimeout(resolve, 200));
     const snap = await status.execute({});
 
-    assert.equal(snap.formatjiang.listening, false, '探测不到监听时必须写 false');
-    assert.equal(snap.formatjiang.mcpEnabled, true, '配置事实仍然照实报');
+    assert.equal(snap.geshijiang.listening, false, '探测不到监听时必须写 false');
+    assert.equal(snap.geshijiang.mcpEnabled, true, '配置事实仍然照实报');
     assert.ok(snap.hints.some((hint) => hint.includes('没有监听')), `缺少「没有监听」提示：${JSON.stringify(snap.hints)}`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1157,7 +1176,7 @@ test('端口没在听时状态写「没有监听」，而不是把配置当就�
 });
 
 test('端口真的在听时状态写「正在监听」，诊断信息也照实说', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-listen-on-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-listen-on-'));
   const server = net.createServer();
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
@@ -1165,14 +1184,14 @@ test('端口真的在听时状态写「正在监听」，诊断信息也照实�
   try {
     const { ctx, record } = makeCtx();
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_listen_on', dataDir: dir, autoReconnect: false });
-    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
-    const diagnostics = record.tools.find((tool) => tool.name === 'formatjiang_diagnostics');
+    const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
+    const diagnostics = record.tools.find((tool) => tool.name === 'geshijiang_diagnostics');
     // 第一次快照触发端口探测（异步），等结果落地后再取一次同样的状态。
     await status.execute({});
     await new Promise((resolve) => setTimeout(resolve, 200));
     const snap = await status.execute({});
 
-    assert.equal(snap.formatjiang.listening, true);
+    assert.equal(snap.geshijiang.listening, true);
     assert.ok(!snap.hints.some((hint) => hint.includes('没有监听')), '端口在听时不该提示未监听');
     const report = await diagnostics.execute({});
     assert.match(report.text, /端口 \d+（正在监听）/);
@@ -1183,19 +1202,19 @@ test('端口真的在听时状态写「正在监听」，诊断信息也照实�
 });
 
 test('宿主只说 Connection closed 时，插件自己把桥接 stderr 捞回来', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-probe-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-probe-'));
   const server = net.createServer();
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
   fs.writeFileSync(path.join(dir, 'mcp_settings.json'), JSON.stringify({ enabled: true, port }), 'utf8');
   const { ctx, record, serverView } = makeCtx();
   serverView.status.state = 'failed';
-  serverView.status.lastError = 'mcp-client(formatjiang): startup: SdkError: Connection closed';
+  serverView.status.lastError = 'mcp-client(geshijiang): startup: SdkError: Connection closed';
   try {
     // 用 node 当「桥接程序」：它必然会因为这个参数组合失败并往 stderr 写东西，
     // 正好用来验证「探测能不能把子进程那句话取回来」，不依赖真的格式匠。
     plugin.apply(ctx, { executablePath: process.execPath, installationId: 'ins_probe', dataDir: dir, autoReconnect: false });
-    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
     // 第一步触发端口探测，等它落地；第二步才会轮到桥接探测，再等子进程退出。
     await status.execute({});
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -1225,7 +1244,7 @@ test('宿主那一份选了 mountScope: preset 就不再挂桥接，状态里说
   assert.equal(record.tools.length, 12);
   assert.equal(record.routes.length, 1);
 
-  const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+  const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
   const snap = await status.execute({});
   assert.equal(snap.mountScope, 'preset');
   assert.equal(snap.server.state, 'unmounted');
@@ -1234,7 +1253,7 @@ test('宿主那一份选了 mountScope: preset 就不再挂桥接，状态里说
   // 手动连接按钮要给出同一条说明，而不是一句「未挂载」。
   // preset 模式下这不是故障：桥接归预设里的官方 mcp 客户端，宿主没有可重建的连接，
   // 宿主通道可用时这条调用算成功（见 presetScopeNote）。
-  const connect = record.tools.find((tool) => tool.name === 'formatjiang_connect');
+  const connect = record.tools.find((tool) => tool.name === 'geshijiang_connect');
   const result = await connect.execute({});
   assert.equal(result.ok, true, result.text);
   assert.match(result.text, /不用重连/);
@@ -1250,7 +1269,7 @@ test('宿主那一份选了 mountScope: preset 就不再挂桥接，状态里说
  * 回一句「没选预设」。宿主通道与桥接是两条路，必须各有各的门禁与状态。
  */
 test('预设用官方 mcp 客户端时（没有交接记录），宿主工具照常可用', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-preset-host-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-preset-host-'));
   const { ctx, record } = makeCtx();
   try {
     plugin.apply(ctx, {
@@ -1267,7 +1286,7 @@ test('预设用官方 mcp 客户端时（没有交接记录），宿主工具照
     fs.writeFileSync(source, 'preset-host');
     const exec = { agent: { session: { header: { id: 'preset-chat' } } } };
     let stagedPath = '';
-    globalThis.__fjExec = {
+    globalThis.__geshijiangExec = {
       respond(call, done) {
         assert.equal(call.args[1], 'host');
         assert.equal(call.args.at(-1), 'preset-chat');
@@ -1277,7 +1296,7 @@ test('预设用官方 mcp 客户端时（没有交接记录），宿主工具照
       },
     };
 
-    const stage = record.tools.find((tool) => tool.name === 'formatjiang_stage_attachment');
+    const stage = record.tools.find((tool) => tool.name === 'geshijiang_stage_attachment');
     const staged = await stage.execute({ path: source }, exec);
     assert.equal(staged.ok, true, staged.text);
     assert.equal(staged.data.file.file_id, 'f_preset');
@@ -1285,17 +1304,17 @@ test('预设用官方 mcp 客户端时（没有交接记录），宿主工具照
     assert.equal(path.relative(path.join(dir, 'mcp-files', 'inbox'), stagedPath).startsWith('..'), false);
 
     // 会话身份同样走宿主通道：它以前也被「还没连上」挡住。
-    globalThis.__fjExec = {
+    globalThis.__geshijiangExec = {
       respond(call, done) {
         assert.equal(call.input.name, 'get_session_binding');
         done(null, JSON.stringify({ status: 'ok', data: { binding: null } }), '');
       },
     };
-    const session = record.tools.find((tool) => tool.name === 'formatjiang_session');
+    const session = record.tools.find((tool) => tool.name === 'geshijiang_session');
     const bound = await session.execute({ action: 'get' }, exec);
     assert.equal(bound.ok, true, bound.text);
 
-    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
     const snap = await status.execute({});
     assert.equal(snap.mountScope, 'preset');
     assert.equal(snap.presetBridge, null, '官方客户端不写交接记录');
@@ -1307,23 +1326,23 @@ test('预设用官方 mcp 客户端时（没有交接记录），宿主工具照
     assert.doesNotMatch(snap.text, /选了这个预设的会话才加载/);
     assert.doesNotMatch(snap.text, /再等一个回合/);
   } finally {
-    delete globalThis.__fjExec;
+    delete globalThis.__geshijiangExec;
     record.disposers.forEach((dispose) => dispose());
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test('宿主通道缺安装 ID 时报缺什么，不再说「还没连上」', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fj-preset-noins-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geshijiang-preset-noins-'));
   const { ctx, record } = makeCtx();
   try {
     // 空的临时数据目录里没有格式匠数据库：安装 ID 发现不了，这是配置问题，不是连接问题。
     plugin.apply(ctx, { executablePath: EXE, installationId: '', dataDir: dir, mountScope: 'preset', autoReconnect: false });
-    const stage = record.tools.find((tool) => tool.name === 'formatjiang_stage_attachment');
+    const stage = record.tools.find((tool) => tool.name === 'geshijiang_stage_attachment');
     const source = path.join(dir, 'draft.docx');
     fs.writeFileSync(source, 'x');
     let spawns = 0;
-    globalThis.__fjExec = { respond() { spawns += 1; assert.fail('通道不可用时不该起宿主进程'); } };
+    globalThis.__geshijiangExec = { respond() { spawns += 1; assert.fail('通道不可用时不该起宿主进程'); } };
 
     const staged = await stage.execute({ path: source }, { agent: { session: { header: { id: 'noins-chat' } } } });
     assert.equal(staged.ok, false);
@@ -1331,14 +1350,14 @@ test('宿主通道缺安装 ID 时报缺什么，不再说「还没连上」', a
     assert.doesNotMatch(staged.text, /还没连上/);
     assert.equal(spawns, 0);
 
-    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
     const snap = await status.execute({});
     assert.equal(snap.hostChannel.ok, false);
     assert.match(snap.text, /宿主通道：不可用/);
     // 没有交接记录、宿主通道又不可用：整体确实还没接好，不能硬报成功。
     assert.equal(snap.ok, false);
   } finally {
-    delete globalThis.__fjExec;
+    delete globalThis.__geshijiangExec;
     record.disposers.forEach((dispose) => dispose());
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -1358,7 +1377,7 @@ test('预设作用域那一份只挂桥接，不注册工具、提示、技能�
 
   assert.equal((record.plugins || []).length, 1, '预设里没有挂上 mcp 客户端');
   const bridged = record.plugins[0];
-  assert.equal(bridged.config.serverName, 'formatjiang');
+  assert.equal(bridged.config.serverName, 'geshijiang');
   assert.equal(bridged.config.transport, 'stdio');
   assert.equal(bridged.config.command, EXE);
   assert.deepEqual(bridged.config.args, ['mcp', 'bridge', '--installation-id', 'ins_preset01']);
@@ -1387,7 +1406,7 @@ test('桥接挂在预设上时，系统提示先把「这个会话看不到业�
  * 用例直接读写它，所以每个用例前后都要清干净、并丢掉插件里的读取缓存。
  */
 function sharedFilePath() {
-  return process.env.FORMATJIANG_STATE_FILE;
+  return process.env.GESHIJIANG_STATE_FILE;
 }
 
 function resetSharedFile() {
@@ -1424,7 +1443,7 @@ test('桥接交给预设时，宿主把「程序在哪、安装 ID 是什么」�
   try {
     const { ctx, record } = makeCtx();
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_handoff01', mountScope: 'preset' });
-    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
     await status.execute({});
 
     const shared = readSharedFile();
@@ -1448,7 +1467,7 @@ test('预设那一份写了状态，宿主的面板与状态工具要能读到',
     writeSharedFile({
       presetBridge: { state: 'connected', toolCount: 110, lastError: '', at: Date.now() },
     });
-    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
     const snap = await status.execute({});
 
     assert.equal(snap.ok, true, '预设里连上了，宿主这份的 ok 也该是 true');
@@ -1468,7 +1487,7 @@ test('预设那一份连不上时，宿主要把原因和「多久以前」讲�
     writeSharedFile({
       presetBridge: { state: 'failed', toolCount: 0, lastError: 'SdkError: Connection closed', at: Date.now() - 5 * 60 * 1000 },
     });
-    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
     const snap = await status.execute({});
 
     assert.equal(snap.ok, false);
@@ -1516,8 +1535,8 @@ test('宿主已经通过 mcpManager 挂了同名服务器时，预设那一份�
   resetSharedFile();
   try {
     const { ctx, record } = makeCtx();
-    // 模拟宿主那一份已经挂上（真实环境里它的 list() 会列出 formatjiang）。
-    ctx.mcpManager.register('formatjiang', { transport: 'stdio' });
+    // 模拟宿主那一份已经挂上（真实环境里它的 list() 会列出 geshijiang）。
+    ctx.mcpManager.register('geshijiang', { transport: 'stdio' });
     plugin.apply(ctx, { executablePath: EXE, installationId: 'ins_guard02', bridgeOnly: true });
     await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -1537,7 +1556,7 @@ test('交接台上超过十分钟的记录不再当成现在', async () => {
     writeSharedFile({
       presetBridge: { state: 'connected', toolCount: 110, lastError: '', at: Date.now() - 11 * 60 * 1000 },
     });
-    const status = record.tools.find((tool) => tool.name === 'formatjiang_status');
+    const status = record.tools.find((tool) => tool.name === 'geshijiang_status');
     const snap = await status.execute({});
 
     assert.equal(snap.presetBridge, null, '过期记录不能当成现在的状态');
@@ -1601,7 +1620,7 @@ test('预设那一份优先用宿主加载器取 mcp-client：parent 给的是 p
     assert.match(calls[0].parent, /profiles\/desktop\/cordis\.patch\.yml$/);
     assert.equal((record.plugins || []).length, 1, '取到的模块要交给 ctx.plugin 挂桥接');
     assert.equal(record.plugins[0].pluginObject, fakeModule);
-    assert.equal(record.plugins[0].config.serverName, 'formatjiang');
+    assert.equal(record.plugins[0].config.serverName, 'geshijiang');
   } finally {
     resetSharedFile();
   }

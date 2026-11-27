@@ -49,15 +49,15 @@ const raw = src.toLowerCase().endsWith('.asar') ? readFromAsar(src, IN_ASAR) : f
 
 const lines = raw.split(/\r?\n/)
 
-// 1) Loader 行 id：preset-cordis → preset-formatjiang
+// 1) Loader 行 id：preset-cordis → preset-geshijiang
 const rowIndex = lines.findIndex((line) => /^\s*-\s+id:\s+preset-cordis\s*$/.test(line))
 if (rowIndex < 0) throw new Error('源文件里没有 preset-cordis 这一行，shipped 预设的结构可能变了')
-lines[rowIndex] = lines[rowIndex].replace('preset-cordis', 'preset-formatjiang')
+lines[rowIndex] = lines[rowIndex].replace('preset-cordis', 'preset-geshijiang')
 
 // 2) config.id 与展示字段。源文件哪天补了自己的 name/description，这里就不再插一遍。
 const configIdIndex = lines.findIndex((line) => /^\s+id:\s+cordis\s*$/.test(line))
 if (configIdIndex < 0) throw new Error('源文件里没有 config.id: cordis，shipped 预设的结构可能变了')
-lines[configIdIndex] = lines[configIdIndex].replace(/id:\s*cordis/, 'id: formatjiang')
+lines[configIdIndex] = lines[configIdIndex].replace(/id:\s*cordis/, 'id: geshijiang')
 let insertAt = configIdIndex + 1
 if (!/^\s+name:/.test(lines[insertAt] || '')) lines.splice(insertAt++, 0, '        name: 格式匠')
 if (!/^\s+description:/.test(lines[insertAt] || '')) {
@@ -80,7 +80,7 @@ function flag(name) {
 
 function handoffTarget() {
   try {
-    const file = path.join(os.tmpdir(), 'dsh-formatjiang-assistant', 'state.json')
+    const file = path.join(os.tmpdir(), 'dsh-geshijiang-assistant', 'state.json')
     const shared = JSON.parse(fs.readFileSync(file, 'utf8'))
     return shared?.hostTarget ?? null
   } catch {
@@ -89,14 +89,14 @@ function handoffTarget() {
 }
 
 const handoff = handoffTarget()
-const command = flag('--command') || process.env.FORMATJIANG_EXE || handoff?.executable
-const installationId = flag('--installation-id') || process.env.FORMATJIANG_INSTALLATION_ID || handoff?.installationId
+const command = flag('--command') || process.env.GESHIJIANG_EXE || handoff?.executable
+const installationId = flag('--installation-id') || process.env.GESHIJIANG_INSTALLATION_ID || handoff?.installationId
 if (!command || !installationId) {
   console.error([
     '拿不到格式匠的程序路径或安装 ID。三条来源按顺序试：',
     '  1) --command <path> --installation-id <ins_...>',
-    '  2) 环境变量 FORMATJIANG_EXE / FORMATJIANG_INSTALLATION_ID',
-    '  3) %TEMP%\\dsh-formatjiang-assistant\\state.json 里的 hostTarget（格式匠插件跑过一次就有）',
+    '  2) 环境变量 GESHIJIANG_EXE / GESHIJIANG_INSTALLATION_ID',
+    '  3) %TEMP%\\dsh-geshijiang-assistant\\state.json 里的 hostTarget（格式匠插件跑过一次就有）',
     '安装 ID 在格式匠的「客户端接入」里。',
   ].join('\n'))
   process.exit(2)
@@ -106,11 +106,11 @@ while (lines.length && lines[lines.length - 1].trim() === '') lines.pop()
 lines.push(...[
   '          # 格式匠桥接：直接挂官方 mcp 客户端。工具只对选了这个预设的会话可见。',
   '          # 程序路径或安装 ID 变了，重跑 node scripts/gen-preset.mjs 重新生成这一行。',
-  '          - id: formatjiang-bridge',
+  '          - id: geshijiang-bridge',
   "            name: '@deepseek-ai/dsh-mcp-client'",
   '            config:',
   '              transport: stdio',
-  '              serverName: formatjiang',
+  '              serverName: geshijiang',
   // YAML 单引号里反斜杠是字面量，不能再转义一次，否则预设拿到的就是双反斜杠。
   `              command: '${String(command).replaceAll("'", "''")}'`,
   `              args: [mcp, bridge, --installation-id, ${installationId}]`,

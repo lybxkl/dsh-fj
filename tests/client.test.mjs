@@ -244,7 +244,7 @@ function stateFixture(overrides = {}) {
     label: '需要修复',
     detail: '桥接连接断开',
     server: {
-      name: 'formatjiang',
+      name: 'geshijiang',
       state: 'failed',
       toolCount: 0,
       lastError: 'dial tcp 127.0.0.1:51823: connect: connection refused',
@@ -252,18 +252,18 @@ function stateFixture(overrides = {}) {
       maxAttempts: 10,
       nextRetryAtMs: 0,
     },
-    formatjiang: {
+    geshijiang: {
       executable: EXE,
       installationId: 'ins_abc123',
       installationKind: 'dsh',
-      dataDir: 'C:\\Users\\20182\\formatjiang-data',
+      dataDir: 'C:\\Users\\20182\\geshijiang-data',
       mcpEnabled: true,
       port: 51823,
       safeWrite: true,
     },
     hints: [],
     pluginVersion: '0.2.0',
-    bridge: { transport: 'stdio', skill: 'formatjiang-paper' },
+    bridge: { transport: 'stdio', skill: 'geshijiang-paper' },
     updatedAt: '2026-11-12T12:00:00.000Z',
     ...overrides,
   };
@@ -310,14 +310,14 @@ const DIAGNOSTIC_PAYLOAD = {
     report_ids: [5],
     source_changed: false,
   },
-  resource_uri: 'formatjiang://diagnostics/88',
+  resource_uri: 'geshijiang://diagnostics/88',
 };
 
 /* ---------------------------- 用例 ---------------------------- */
 
 test('只注册约定的槽位与工具卡', () => {
   const entry = loadClient();
-  assert.equal(entry.id, '@local/formatjiang-assistant');
+  assert.equal(entry.id, '@local/geshijiang-assistant');
   const { ctx, registrations } = makeSlots();
   const module = entry.factory((id) => (id === 'react' ? React : null));
   assert.deepEqual(module.inject, ['slots']);
@@ -325,16 +325,16 @@ test('只注册约定的槽位与工具卡', () => {
 
   const keys = registrations.map((item) => `${item.target.name}:${item.target.key ?? item.target.id ?? '*'}`);
   assert.deepEqual(keys.sort(), [
-    'plugins.bundle.config:@local/formatjiang-assistant',
-    'settings.section.icon:formatjiang',
-    'settings.section:formatjiang',
-    'tool.call.toolview:formatjiang_connect',
-    'tool.call.toolview:formatjiang_diagnostics',
-    'tool.call.toolview:formatjiang_open',
-    'tool.call.toolview:formatjiang_status',
-    'tool.call.toolview:mcp__formatjiang__list_findings',
-    'tool.call.toolview:mcp__formatjiang__preview_layout_plan',
-    'tool.call.toolview:mcp__formatjiang__run_paper_diagnostic',
+    'plugins.bundle.config:@local/geshijiang-assistant',
+    'settings.section.icon:geshijiang',
+    'settings.section:geshijiang',
+    'tool.call.toolview:geshijiang_connect',
+    'tool.call.toolview:geshijiang_diagnostics',
+    'tool.call.toolview:geshijiang_open',
+    'tool.call.toolview:geshijiang_status',
+    'tool.call.toolview:mcp__geshijiang__list_findings',
+    'tool.call.toolview:mcp__geshijiang__preview_layout_plan',
+    'tool.call.toolview:mcp__geshijiang__run_paper_diagnostic',
   ]);
 });
 
@@ -342,8 +342,8 @@ test('设置页按三步给出当前卡点与下一步', async () => {
   const react = createHookReact();
   const state = stateFixture();
   // 还没建本机安装：第二步应当是「未完成」，并直接写出该点哪里。
-  state.formatjiang.installationId = '';
-  state.formatjiang.installationKind = '';
+  state.geshijiang.installationId = '';
+  state.geshijiang.installationKind = '';
   const restore = stubStateFetch(state);
   try {
     const entry = loadClient();
@@ -367,7 +367,7 @@ test('设置页按三步给出当前卡点与下一步', async () => {
 
     const icon = registrations.find((item) => item.target.name === 'settings.section.icon');
     assert.ok(icon, '没有注册 settings.section.icon');
-    assert.equal(icon.target.id, 'formatjiang', '图标 id 必须等于分节 id，否则不会渲染');
+    assert.equal(icon.target.id, 'geshijiang', '图标 id 必须等于分节 id，否则不会渲染');
     const iconElement = icon.component({ size: 16, active: false });
     assert.equal(iconElement.type, 'svg');
     assert.equal(iconElement.props.width, 16);
@@ -391,7 +391,7 @@ test('插件页在连接断开时给出错误原文与「打开格式匠」', as
   const react = createHookReact();
   const restore = stubStateFetch(stateFixture());
   try {
-    const page = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+    const page = pickCard('plugins.bundle.config', '@local/geshijiang-assistant', react).component;
     const props = { view: 'page' };
     // 第一帧挂上 effect 并发出 /state 请求；等回调写完状态再渲染第二帧。
     render(page(props));
@@ -420,7 +420,7 @@ test('请求失败时把按钮放回可点状态并说明原因', async () => {
   const react = createHookReact();
   const restore = stubStateFetch(stateFixture());
   try {
-    const page = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+    const page = pickCard('plugins.bundle.config', '@local/geshijiang-assistant', react).component;
     const props = { view: 'page' };
     render(page(props));
     await flush();
@@ -444,7 +444,7 @@ test('请求失败时把按钮放回可点状态并说明原因', async () => {
 });
 
 test('套版方案卡按真实计划字段摊开影响、冲突与受保护内容', () => {
-  const PlanCard = pickTool('mcp__formatjiang__preview_layout_plan');
+  const PlanCard = pickTool('mcp__geshijiang__preview_layout_plan');
   const result = (payload) => ({ phase: 'result', block: { content: [{ type: 'text', text: typeof payload === 'string' ? payload : JSON.stringify(payload) }] } });
 
   // 真机返回外面还有一层 { data, status, summary, trace, warnings } 信封。
@@ -477,7 +477,7 @@ test('套版方案卡按真实计划字段摊开影响、冲突与受保护内�
 });
 
 test('提交检查卡按 severity 计数，并给出问题定位与两个操作', () => {
-  const Card = pickTool('mcp__formatjiang__run_paper_diagnostic');
+  const Card = pickTool('mcp__geshijiang__run_paper_diagnostic');
   const result = (payload) => ({ phase: 'result', block: { content: [{ type: 'text', text: JSON.stringify(payload) }] } });
 
   // 真机返回带信封，拆包后才能拿到 run.findings。
@@ -500,7 +500,7 @@ test('提交检查卡按 severity 计数，并给出问题定位与两个操作'
 });
 
 test('真实返回里的 fail 归入错误，未知 severity 不悄悄消失', () => {
-  const Card = pickTool('mcp__formatjiang__run_paper_diagnostic');
+  const Card = pickTool('mcp__geshijiang__run_paper_diagnostic');
   const result = (payload) => ({ phase: 'result', block: { content: [{ type: 'text', text: JSON.stringify({ data: payload, status: 'ok' }) }] } });
 
   const html = text(Card(result({
@@ -521,7 +521,7 @@ test('真实返回里的 fail 归入错误，未知 severity 不悄悄消失', (
 });
 
 test('问题清单入口用同一张卡，计数与列表不另起一套', () => {
-  const Card = pickTool('mcp__formatjiang__list_findings');
+  const Card = pickTool('mcp__geshijiang__list_findings');
   const html = text(Card({
     phase: 'result',
     block: {
@@ -534,7 +534,7 @@ test('问题清单入口用同一张卡，计数与列表不另起一套', () =>
               { severity: 'error', message: '参考文献 [3] 的页码与正文不符' },
               { severity: 'info', message: '共 2 条问题' },
             ],
-            resource_uri: 'formatjiang://diagnostics/88',
+            resource_uri: 'geshijiang://diagnostics/88',
           },
           status: 'ok',
         }),
@@ -546,19 +546,19 @@ test('问题清单入口用同一张卡，计数与列表不另起一套', () =>
 });
 
 test('没有解析出结构时退回原文，不编造字段', () => {
-  const Card = pickTool('mcp__formatjiang__run_paper_diagnostic');
+  const Card = pickTool('mcp__geshijiang__run_paper_diagnostic');
   const broken = text(Card({ phase: 'result', block: { content: [{ type: 'text', text: '检查已提交，稍后用 list_findings 读取' }] } }));
   assert.match(broken, /未解析/);
   assert.match(broken, /检查已提交/);
 });
 
 test('状态类工具只显示一行，不在对话里铺开', () => {
-  const status = pickTool('formatjiang_status');
+  const status = pickTool('geshijiang_status');
   const row = text(status({ phase: 'result', block: { content: [{ type: 'text', text: '格式匠：已连接（32 个工具可用）' }] } }));
   assert.match(row, /格式匠状态/);
   assert.match(row, /32 个工具可用/);
 
-  const diagnostics = pickTool('formatjiang_diagnostics');
+  const diagnostics = pickTool('geshijiang_diagnostics');
   const line = text(diagnostics({ phase: 'result', block: { content: [{ type: 'text', text: '格式匠论文助手 0.2.0' }] } }));
   assert.match(line, /格式匠诊断/);
 });
@@ -569,7 +569,7 @@ test('断开时按自动重连进度说明还要不要等', async () => {
     const react = createHookReact();
     const restore = stubStateFetch(state);
     try {
-      const page = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+      const page = pickCard('plugins.bundle.config', '@local/geshijiang-assistant', react).component;
       const props = { view: 'page' };
       render(page(props));
       await flush();
@@ -592,7 +592,7 @@ test('断开时按自动重连进度说明还要不要等', async () => {
 
   const base = stateFixture();
   const updating = await renderWith(stateFixture({
-    formatjiang: { ...base.formatjiang, updating: true },
+    geshijiang: { ...base.geshijiang, updating: true },
     auto: { enabled: true, attempts: 0, max: 3, exhausted: false, nextAtMs: 0 },
   }));
   assert.match(updating, /正在安装更新/);
@@ -603,7 +603,7 @@ test('连上之后列出工具、资源与提示词，读不到时说明原因',
     const react = createHookReact();
     const restore = stubStateFetch(state);
     try {
-      const page = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+      const page = pickCard('plugins.bundle.config', '@local/geshijiang-assistant', react).component;
       const props = { view: 'page' };
       render(page(props));
       await flush();
@@ -630,9 +630,9 @@ test('连上之后列出工具、资源与提示词，读不到时说明原因',
         server: { name: '格式匠 MCP 聚合网关', version: '1.0.58' },
         protocolVersion: '2026-07-28',
         tools: [{ name: 'list_papers', description: '列出论文' }],
-        resources: [{ uri: 'formatjiang://paper/1', name: '论文 1' }],
-        resourceTemplates: [{ uriTemplate: 'formatjiang://paper/{id}', name: '论文' }],
-        prompts: [{ name: 'formatjiang/thesis' }],
+        resources: [{ uri: 'geshijiang://paper/1', name: '论文 1' }],
+        resourceTemplates: [{ uriTemplate: 'geshijiang://paper/{id}', name: '论文' }],
+        prompts: [{ name: 'geshijiang/thesis' }],
         truncated: false,
         durationMs: 89,
       },
@@ -649,7 +649,7 @@ test('连上之后列出工具、资源与提示词，读不到时说明原因',
 
   const broken = await renderWith({
     ...connected,
-    catalog: { fetchedAt: new Date().toISOString(), ageMs: 0, stale: false, error: 'formatjiang mcp describe: 未知子命令', data: null },
+    catalog: { fetchedAt: new Date().toISOString(), ageMs: 0, stale: false, error: 'geshijiang mcp describe: 未知子命令', data: null },
   });
   assert.match(broken, /未知子命令/);
   assert.match(broken, /升级/);
@@ -660,7 +660,7 @@ test('已连接时给出「断开连接」，断开后换成恢复提示', async
     const react = createHookReact();
     const restore = stubStateFetch(state);
     try {
-      const page = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+      const page = pickCard('plugins.bundle.config', '@local/geshijiang-assistant', react).component;
       const props = { view: 'page' };
       render(page(props));
       await flush();
@@ -703,7 +703,7 @@ test('读不到状态时给出原因与重试，而不是一直停在「正在�
   globalThis.setInterval = () => 0;
   globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
   try {
-    const page = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+    const page = pickCard('plugins.bundle.config', '@local/geshijiang-assistant', react).component;
     const props = { view: 'page' };
     render(page(props));
     await flush();
@@ -731,7 +731,7 @@ test('设置页读不到状态时也把原因写出来', async () => {
     throw error;
   };
   try {
-    const settings = pickCard('settings.section', 'formatjiang', react).component;
+    const settings = pickCard('settings.section', 'geshijiang', react).component;
     render(settings({}));
     await flush();
     react.reset();
@@ -749,10 +749,10 @@ test('设置页读不到状态时也把原因写出来', async () => {
 test('端口没在听时清单写「当前未监听」，不把配置当成已就绪', async () => {
   const react = createHookReact();
   const fixture = stateFixture();
-  fixture.formatjiang.listening = false;
+  fixture.geshijiang.listening = false;
   const restore = stubStateFetch(fixture);
   try {
-    const settings = pickCard('settings.section', 'formatjiang', react).component;
+    const settings = pickCard('settings.section', 'geshijiang', react).component;
     render(settings({}));
     await flush();
     react.reset();
@@ -768,10 +768,10 @@ test('端口没在听时清单写「当前未监听」，不把配置当成已�
 test('端口在听时清单不加「未监听」，也不改标题', async () => {
   const react = createHookReact();
   const fixture = stateFixture();
-  fixture.formatjiang.listening = true;
+  fixture.geshijiang.listening = true;
   const restore = stubStateFetch(fixture);
   try {
-    const settings = pickCard('settings.section', 'formatjiang', react).component;
+    const settings = pickCard('settings.section', 'geshijiang', react).component;
     render(settings({}));
     await flush();
     react.reset();
@@ -791,7 +791,7 @@ test('桥接交给预设时，设置页说清在哪用，并带上预设里最�
     tone: 'ok',
     label: '已连接',
     detail: '110 个工具可用（「格式匠」预设 · 刚刚）',
-    server: { name: 'formatjiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
+    server: { name: 'geshijiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
     presetBridge: { state: 'connected', toolCount: 110, lastError: '', at: Date.now() },
   });
   const restore = stubStateFetch(state);
@@ -824,12 +824,12 @@ test('预设里没有记录时，插件页不画红灯，改说明去哪儿用',
     tone: 'idle',
     label: '由预设提供',
     detail: '桥接由「格式匠」预设提供',
-    server: { name: 'formatjiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
+    server: { name: 'geshijiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
     presetBridge: null,
   });
   const restore = stubStateFetch(state);
   try {
-    const card = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+    const card = pickCard('plugins.bundle.config', '@local/geshijiang-assistant', react).component;
     const props = { view: 'card' };
     render(card(props));
     await flush();
@@ -855,7 +855,7 @@ test('预设里没有交接记录时，设置页按宿主通道把这步标成�
     const react = createHookReact();
     const restore = stubStateFetch(state);
     try {
-      const settings = pickCard('settings.section', 'formatjiang', react).component;
+      const settings = pickCard('settings.section', 'geshijiang', react).component;
       render(settings({}));
       await flush();
       react.reset();
@@ -871,7 +871,7 @@ test('预设里没有交接记录时，设置页按宿主通道把这步标成�
     tone: 'idle',
     label: '由预设提供',
     detail: '',
-    server: { name: 'formatjiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
+    server: { name: 'geshijiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
     presetBridge: null,
   }));
   assert.match(ready, /本机已就绪，在「格式匠」预设的会话里使用/);
@@ -884,9 +884,9 @@ test('预设里没有交接记录时，设置页按宿主通道把这步标成�
     tone: 'idle',
     label: '由预设提供',
     detail: '',
-    server: { name: 'formatjiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
+    server: { name: 'geshijiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
     presetBridge: null,
-    formatjiang: { executable: EXE, installationId: '', installationKind: '', dataDir: '', mcpEnabled: true, port: 0 },
+    geshijiang: { executable: EXE, installationId: '', installationKind: '', dataDir: '', mcpEnabled: true, port: 0 },
   }));
   assert.doesNotMatch(missing, /本机已就绪/);
   assert.match(missing, /在「格式匠」预设的会话里使用/);
@@ -903,12 +903,12 @@ test('mountScope: off 时面板说清是配置选择，不给按不动的重连�
     tone: 'idle',
     label: '桥接已关闭',
     detail: '',
-    server: { name: 'formatjiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
+    server: { name: 'geshijiang', state: 'unmounted', toolCount: 0, lastError: '', attempt: 0, maxAttempts: 0, nextRetryAtMs: 0 },
     presetBridge: null,
   });
   const restore = stubStateFetch(state);
   try {
-    const card = pickCard('plugins.bundle.config', '@local/formatjiang-assistant', react).component;
+    const card = pickCard('plugins.bundle.config', '@local/geshijiang-assistant', react).component;
     const props = { view: 'page' };
     render(card(props));
     await flush();

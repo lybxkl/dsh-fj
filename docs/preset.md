@@ -1,6 +1,6 @@
 # 让某个会话座席固定成「论文助手」
 
-插件本身装在整个 profile 上：任何会话都能用到 `mcp__formatjiang__*` 工具、`formatjiang-paper` 技能与 `/formatjiang` 命令。
+插件本身装在整个 profile 上：任何会话都能用到 `mcp__geshijiang__*` 工具、`geshijiang-paper` 技能与 `/geshijiang` 命令。
 
 如果想把**某一个座席**固定成论文助手（例如「格式匠论文助手」这个会话只做论文，不掺别的活），做法是在 profile 的 `cordis.patch.yml` 里给预设（agent preset）加一行，把本插件挂进那个预设的 `plugins` 列表。
 
@@ -30,8 +30,8 @@
 在目标预设的 `plugins` 列表里追加（位置随意，同一层即可）：
 
 ```yaml
-          - id: formatjiang-assistant
-            name: '@local/formatjiang-assistant'
+          - id: geshijiang-assistant
+            name: '@local/geshijiang-assistant'
             config:
               executablePath: ''
               installationId: ''
@@ -49,13 +49,13 @@
               prefix: |-
                 You are a thesis assistant powered by the {{model}} model.
                 你只处理用户已经导入格式匠的论文：套版、提交检查、资料与页码取证。
-                连接状态不明时先调 formatjiang_status，不要在断线状态下反复重试业务工具。
+                连接状态不明时先调 geshijiang_status，不要在断线状态下反复重试业务工具。
 ```
 
 ## 装完怎么确认
 
 1. 重启 DeepSeek Harness。
-2. 在那个预设下新建会话，让它调用 `formatjiang_status`：返回「已连接」且工具数大于 0 即为挂上。
+2. 在那个预设下新建会话，让它调用 `geshijiang_status`：返回「已连接」且工具数大于 0 即为挂上。
 3. 如果它说「没有 mcpManager」，说明这个预设的插件清单里缺 `@deepseek-ai/dsh-mcp-client`（或对应的 mcp 管理器行）——补上后再试，插件自己不会插第二份。
 
 ## 这个座席能做什么、不能做什么
